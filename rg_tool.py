@@ -27,6 +27,7 @@ PROJECT_APPS = {
   'gwenesis':     [0, 16, 1048576],
   'fmsx':         [0, 16, 655360],
   'gbsp':         [0, 16, 851968],
+<<<<<<< HEAD
   'duke3d-go':    [0, 16, 917504],
   'quake-go':     [0, 16, 851968],
   'celeste':      [0, 16, 524288],
@@ -36,6 +37,9 @@ PROJECT_APPS = {
   'cannonball':   [0, 16, 851968],
   'rott':         [0, 16, 917504],
   'pocketsnes':   [0, 16, 655360],
+=======
+  'classicube':   [0, 16, 851968],
+>>>>>>> 49281c52 (Fixes compile warnings)
 }
 # PROJECT_APPS = {}
 # for t in glob.glob("*/CMakeLists.txt"):
