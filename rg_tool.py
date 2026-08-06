@@ -11,10 +11,7 @@ import struct
 import time
 import zlib
 
-DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "gb300-p4")
-DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
-DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM3")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go snes9x gwenesis fmsx gbsp duke3d-go quake-go celeste stella openlara wolf4sdl cannonball rott pocketsnes")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go snes9x gwenesis fmsx gbsp duke3d-go quake-go celeste stella openlara wolf4sdl cannonball rott pocketsnes classicube ngp-go")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 PROJECT_APPS = {
@@ -27,7 +24,6 @@ PROJECT_APPS = {
   'gwenesis':     [0, 16, 1048576],
   'fmsx':         [0, 16, 655360],
   'gbsp':         [0, 16, 851968],
-<<<<<<< HEAD
   'duke3d-go':    [0, 16, 917504],
   'quake-go':     [0, 16, 851968],
   'celeste':      [0, 16, 524288],
@@ -37,10 +33,10 @@ PROJECT_APPS = {
   'cannonball':   [0, 16, 851968],
   'rott':         [0, 16, 917504],
   'pocketsnes':   [0, 16, 655360],
-=======
   'classicube':   [0, 16, 851968],
->>>>>>> 49281c52 (Fixes compile warnings)
+  'ngp-go':       [0, 16, 655360],
 }
+
 # PROJECT_APPS = {}
 # for t in glob.glob("*/CMakeLists.txt"):
 #     name = os.path.basename(os.path.dirname(t))
