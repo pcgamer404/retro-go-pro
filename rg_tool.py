@@ -11,7 +11,7 @@ import struct
 import time
 import zlib
 
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core prboom-go snes9x gwenesis fmsx gbsp duke3d-go quake-go celeste stella openlara wolf4sdl cannonball rott pocketsnes classicube ngp-go sm64-go")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher retro-core snes9x gwenesis fmsx duke3d-go celeste openlara wolf4sdl cannonball rott pocketsnes classicube ngp-go sm64-go")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 PROJECT_APPS = {
@@ -19,15 +19,11 @@ PROJECT_APPS = {
   'updater':      [0, 0,  393216],
   'launcher':     [0, 16, 1048576],
   'retro-core':   [0, 16, 851968],
-  'prboom-go':    [0, 16, 851968],
   'snes9x':       [0, 16, 655360],
   'gwenesis':     [0, 16, 1048576],
   'fmsx':         [0, 16, 655360],
-  'gbsp':         [0, 16, 851968],
   'duke3d-go':    [0, 16, 917504],
-  'quake-go':     [0, 16, 851968],
   'celeste':      [0, 16, 524288],
-  'stella':       [0, 16, 1048576],
   'wolf4sdl':     [0, 16, 655360],
   'openlara':     [0, 16, 1179648],
   'cannonball':   [0, 16, 851968],
