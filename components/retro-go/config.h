@@ -1,5 +1,5 @@
-#if defined(RG_TARGET_BRUTZELBOY)
-#include "targets/brutzelboy/config.h"
+#if defined(RG_TARGET_MY_HANDHELD)
+#include "targets/my-handheld/config.h"
 #elif defined(RG_TARGET_MY_HANDHELD)
 #include "targets/my-handheld/config.h"
 #else
@@ -9,11 +9,11 @@
 #endif
 
 #ifndef RG_PROJECT_NAME
-#define RG_PROJECT_NAME "Retro-Go"
+#define RG_PROJECT_NAME "Retro-Go-Pro"
 #endif
 
 #ifndef RG_PROJECT_WEBSITE
-#define RG_PROJECT_WEBSITE "https://github.com/ducalex/retro-go"
+#define RG_PROJECT_WEBSITE "https://github.com/pcgamer404/retro-go-pro"
 #endif
 
 #ifndef RG_PROJECT_CREDITS
