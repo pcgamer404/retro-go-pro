@@ -119,7 +119,13 @@ void rg_gui_copy_buffer(int left, int top, int width, int height, int stride, co
 rg_rect_t rg_gui_draw_text(int x_pos, int y_pos, int width, const char *text, // const rg_font_t *font,
                            rg_color_t color_fg, rg_color_t color_bg, uint32_t flags);
 rg_rect_t rg_gui_draw_dialog(const char *title, const rg_gui_option_t *options, size_t options_count, int sel);
+// Returns exactly how many lines `label` will wrap to inside a dialog list
+// row, using the same width/font math rg_gui_draw_dialog uses internally.
+// Useful for anything (like a paginated list) that needs to know a row's
+// real on-screen height before it's actually drawn.
+int rg_gui_estimate_label_lines(const char *label);
 rg_rect_t rg_gui_draw_message(const char *format, ...);
+
 void rg_gui_draw_rect(int x_pos, int y_pos, int width, int height, int border_size,
                       rg_color_t border_color, rg_color_t fill_color);
 void rg_gui_draw_image(int x_pos, int y_pos, int width, int height, bool resample, const rg_image_t *img);

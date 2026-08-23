@@ -2,50 +2,10 @@
 #include "targets/brutzelboy/config.h"
 #elif defined(RG_TARGET_MY_HANDHELD)
 #include "targets/my-handheld/config.h"
-#elif defined(RG_TARGET_BYTEBOI_REV1)
-#include "targets/byteboi-rev1/config.h"
-#elif defined(RG_TARGET_CROKPOCKET)
-#include "targets/crokpocket/config.h"
-#elif defined(RG_TARGET_ESP32_S3_DEVKIT)
-#include "targets/esp32-s3-devkit/config.h"
-#elif defined(RG_TARGET_ESP32_P4_DEVKIT)
-#include "targets/esp32-p4-devkit/config.h"
-#elif defined(RG_TARGET_ESPLAY_MICRO)
-#include "targets/esplay-micro/config.h"
-#elif defined(RG_TARGET_FRI3D_2024)
-#include "targets/fri3d-2024/config.h"
-#elif defined(RG_TARGET_GB300_P4)
-#include "targets/gb300-p4/config.h"
-#elif defined(RG_TARGET_MRGC_G32)
-#include "targets/mrgc-g32/config.h"
-#elif defined(RG_TARGET_MRGC_GBM)
-#include "targets/mrgc-gbm/config.h"
-#elif defined(RG_TARGET_NULLNANO)
-#include "targets/nullnano/config.h"
-#elif defined(RG_TARGET_ODROID_GO)
-#include "targets/odroid-go/config.h"
-#elif defined(RG_TARGET_RACHEL_ESP32)
-#include "targets/rachel-esp32/config.h"
-#elif defined(RG_TARGET_REDROID_GO)
-#include "targets/redroid-go/config.h"
-#elif defined(RG_TARGET_RETRO_ESP32)
-#include "targets/retro-esp32/config.h"
-#elif defined(RG_TARGET_RETRO_RULER)
-#include "targets/retro-ruler/config.h"
-#elif defined(RG_TARGET_SDL2)
-#include "targets/sdl2/config.h"
-#elif defined(RG_TARGET_T_DECK_PLUS)
-#include "targets/t-deck-plus/config.h"
-#elif defined(RG_TARGET_VMU_S3)
-#include "targets/vmu-s3/config.h"
-#elif defined(RG_TARGET_CYD)
-#include "targets/cyd/config.h"
-#elif defined(RG_TARGET_HDMI)
-#include "targets/hdmi/config.h"
 #else
-#warning "No target defined. Defaulting to ODROID-GO."
-#include "targets/odroid-go/config.h"
-#define RG_TARGET_ODROID_GO
+#warning "No target defined. Defaulting to MY HANDHELD."
+#include "targets/my-handheld/config.h"
+#define RG_TARGET_MY_HANDHELD
 #endif
 
 #ifndef RG_PROJECT_NAME

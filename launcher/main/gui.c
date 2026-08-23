@@ -560,15 +560,15 @@ void gui_load_preview(tab_t *tab)
     {
         case PREVIEW_MODE_COVER_SAVE:
             show_missing_cover = true;
-            order = 0x4123;
+            order = 0x41253;
             break;
         case PREVIEW_MODE_SAVE_COVER:
             show_missing_cover = true;
-            order = 0x1234;
+            order = 0x12534;
             break;
         case PREVIEW_MODE_COVER_ONLY:
             show_missing_cover = true;
-            order = 0x0123;
+            order = 0x01253;
             break;
         case PREVIEW_MODE_SAVE_ONLY:
             show_missing_cover = false;
@@ -602,7 +602,13 @@ void gui_load_preview(tab_t *tab)
             path_len = snprintf(path, RG_PATH_MAX, "%s/%X/%08X.art", app->paths.covers, (int)(file->checksum >> 28), (int)file->checksum);
         else if (type == 0x2 && app->use_crc_covers && application_get_file_crc32(file)) // Game cover (png)
             path_len = snprintf(path, RG_PATH_MAX, "%s/%X/%08X.png", app->paths.covers, (int)(file->checksum >> 28), (int)file->checksum);
-        else if (type == 0x3) // Game cover (based on filename)
+        else if (type == 0x3) // Game cover (based on filename, next to the rom)
+		{
+			path_len = snprintf(path, RG_PATH_MAX, "%s/%s", file->folder, file->name);
+			if (path_len < RG_PATH_MAX - 3) // Don't bother if we already have an overflow
+        strcpy(path + path_len - strlen(rg_extension(file->name) ?: ""), "png");
+		}
+        else if (type == 0x5) // Game cover (based on filename, in the covers/romart folder)
         {
             path_len = snprintf(path, RG_PATH_MAX, "%s/%s", app->paths.covers, file->name);
             if (path_len < RG_PATH_MAX - 3) // Don't bother if we already have an overflow

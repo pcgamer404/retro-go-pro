@@ -26,6 +26,10 @@ static const char *SETTING_AUTOCROP = "autocrop";
 static const char *SETTING_OVERSCAN = "overscan";
 static const char *SETTING_PALETTE = "palette";
 static const char *SETTING_SPRITELIMIT = "spritelimit";
+
+static uint8_t turbo_ctr = 0;
+#define TURBO_DIV 2   // ~15Hz at 60fps; lower = faster autofire
+
 // --- MAIN
 
 
@@ -275,6 +279,8 @@ void nes_main(void)
         const int64_t startTime = rg_system_timer();
         uint32_t joystick = rg_input_read_gamepad();
         bool drawFrame = !skipFrames && !nsfPlayer;
+		turbo_ctr++;
+		bool turbo_phase = (turbo_ctr / TURBO_DIV) & 1;
 
         if (joystick & (RG_KEY_MENU|RG_KEY_OPTION))
         {
@@ -294,6 +300,8 @@ void nes_main(void)
         if (joystick & RG_KEY_LEFT)   buttons |= NES_PAD_LEFT;
         if (joystick & RG_KEY_A)      buttons |= NES_PAD_A;
         if (joystick & RG_KEY_B)      buttons |= NES_PAD_B;
+		if ((joystick & RG_KEY_X) && turbo_phase) buttons |= NES_PAD_A;
+		if ((joystick & RG_KEY_Y) && turbo_phase) buttons |= NES_PAD_B;
         input_update(0, buttons);
 
         if (drawFrame)

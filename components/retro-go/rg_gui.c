@@ -843,6 +843,19 @@ rg_rect_t rg_gui_draw_dialog(const char *title, const rg_gui_option_t *options, 
 
     return (rg_rect_t){box_x, box_y, box_width, box_height};
 }
+int rg_gui_estimate_label_lines(const char *label)
+
+{
+    if (!label || !*label)
+        return 1;
+
+    int max_box_width = 0.82f * gui.screen_width;
+    int height = rg_gui_draw_text(0, 0, max_box_width, label, 0, 0,
+                                   RG_TEXT_MULTILINE | RG_TEXT_DUMMY_DRAW).height;
+    int line_height = gui.font_height + 2;
+
+    return RG_MAX(1, height / line_height);
+}
 
 rg_rect_t rg_gui_draw_message(const char *format, ...) // const rg_rect_t *rect,
 {

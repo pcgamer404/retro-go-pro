@@ -11,6 +11,7 @@
 #include "gui.h"
 #include "webui.h"
 #include "updater.h"
+#include "rom_store.h"
 
 static rg_app_t *app;
 
@@ -451,10 +452,20 @@ static void options_handler(rg_gui_option_t *dest)
     memcpy(dest, options, sizeof(options));
 }
 
+static rg_gui_event_t rom_store_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_ENTER) {
+        show_rom_store_menu();
+        return RG_DIALOG_REDRAW;
+    }
+    return RG_DIALOG_VOID;
+}
+
 static void about_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("Build CRC cache"), NULL, RG_DIALOG_FLAG_NORMAL, &prebuild_cache_cb};
     *dest++ = (rg_gui_option_t){0, _("Update Retro-Go"), NULL, RG_DIALOG_FLAG_NORMAL, &updater_cb};
+	*dest++ = (rg_gui_option_t){0, _("ROM Store"),       NULL, RG_DIALOG_FLAG_NORMAL, &rom_store_cb};
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
