@@ -1,2 +1,0 @@
-alias go='cd ../../bin;./tileattr;cd ../src/tileattr'
-alias mk='rm tileattr.exe;rm ../../bin/tileattr.exe;makegen;make;cp tileattr.exe ../../bin'
