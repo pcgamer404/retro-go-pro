@@ -14,8 +14,8 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "my-handheld")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM4")
-# DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater retro-core snes-go pocketsnes gwenesis fmsx duke3d-go celeste openlara wolf4sdl cannonball classicube ngp-go sm64-go fake-08 frodo")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater retro-core snes-go celeste openlara cannonball classicube ngp-go")
+# DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater retro-core snes-go pocketsnes gwenesis fmsx duke3d-go celeste openlara wolf4sdl cannonball classicube ngp-go sm64-go pico8 frodo")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater retro-core snes-go celeste openlara cannonball classicube ngp-go pico8")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 PROJECT_APPS = {
@@ -23,13 +23,12 @@ PROJECT_APPS = {
   'updater':      [0, 0,  393216],
   'launcher':     [0, 16, 1048576],
   'retro-core':   [0, 16, 1572864],
-  'gnuboy':       [0, 16, 1572864],
   'snes-go':      [0, 16, 2097152],
   'pocketsnes':   [0, 16, 655360],
   'gbsp':         [0, 16, 851968],
   'gwenesis':     [0, 16, 1048576],
   'fmsx':         [0, 16, 655360],
-  'fake-08':      [0, 16, 1048576],
+  'pico8':        [0, 16, 1048576],
   'oswan':        [0, 16, 655360],
   'duke3d-go':    [0, 16, 917504],
   'quake-go':     [0, 16, 851968],
@@ -44,6 +43,8 @@ PROJECT_APPS = {
   'sm64-go':      [0, 16, 12582912],
   'rott':         [0, 16, 851968],
   'frodo':        [0, 16, 655360],
+  # 'opentyrian':   [0, 16, 655360],
+  # 'clonekeen':    [0, 16, 655360],
 }
 
 # PROJECT_APPS = {}

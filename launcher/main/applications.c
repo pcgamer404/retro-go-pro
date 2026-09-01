@@ -687,7 +687,6 @@ static void application(const char *desc, const char *name, const char *exts, co
 
 void applications_init(void) {
   application("Nintendo Entertainment System", "nes", "nes fc zip", "retro-core", 16);
-  // application("Famicom Disk System", "fds", "fds zip", "retro-core", 16);
   application("Nintendo Gameboy", "gb", "gb gbc zip", "retro-core", 0);
   application("Nintendo Gameboy Color", "gbc", "gbc gb zip", "retro-core", 0);
   application("Nintendo Gameboy Advance", "gba", "gba zip", "gbsp", 0);
@@ -699,7 +698,7 @@ void applications_init(void) {
   application("Sega Mega Drive", "md", "md gen bin zip", "gwenesis", 0);
   // application("Sega SG-1000", "sg1", "sms sg sg1", "retro-core", 0);
   application("Neo Geo Pocket", "ngp", "ngp ngc zip", "ngp-go", 0);
-  application("Pico-8", "pico8", "p8 png", "fake-08", 0);
+  application("Pico-8", "pico8", "p8 png zip", "pico8", 0);
   application("Atari Lynx", "lnx", "lnx zip", "retro-core", 64);
   application("Atari 2600", "a26", "a26 zip", "stella", 0);
   application("WonderSwan", "ws", "ws wsc zip", "oswan", 0);
@@ -717,7 +716,8 @@ void applications_init(void) {
   application("ClassiCube", "classicube", "cw zip", "classicube", 0);
   application("Super Mario 64", "sm64", "z64 zip", "sm64-go", 0);
   application("Commodore 64", "c64", "crt zip prg d64 t64", "frodo", 0);
-;
+  // application("Tyrian", "opentyrian", "hyt lvl zip", "opentyrian", 0);
+  // application("Commander Keen", "clonekeen", "keen ck1 ck2", "clonekeen", 0);
 
     // Special app to bootstrap native esp32 binaries from the SD card
     // application("Bootstrap", "apps", "bin elf", "bootstrap", 0);
