@@ -156,5 +156,6 @@ esptool.py --chip esp32s3 --port COM3 --baud 921600 write_flash --flash_size det
 ## Credits
 
 - [ducalex](https://github.com/ducalex) and contributors — original [retro-go](https://github.com/ducalex/retro-go) firmware
+- [DynaMight1124](https://github.com/DynaMight1124) for new ports and emulators
 - [pcgamer404](https://github.com/pcgamer404) — [RG-Store-Backend](https://github.com/pcgamer404/RG-Store-Backend)
 - All upstream emulator core and port authors
