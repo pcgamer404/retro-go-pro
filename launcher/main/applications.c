@@ -717,7 +717,7 @@ void applications_init(void) {
   application("Super Mario 64", "sm64", "z64 zip", "sm64-go", 0);
   application("Commodore 64", "c64", "crt zip prg d64 t64", "frodo", 0);
   application("Store", "store", "none", "store", 0);
-  // application("Tyrian", "opentyrian", "hyt lvl zip", "opentyrian", 0);
+  application("Open Tyrian", "opentyrian", "cdt", "opentyrian", 0);
   // application("Commander Keen", "clonekeen", "keen ck1 ck2", "clonekeen", 0);
 
     // Special app to bootstrap native esp32 binaries from the SD card
