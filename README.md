@@ -23,7 +23,7 @@ For the full feature set, build system, supported hardware list, and general doc
 
 ## Ports
 
-DOOM, Wolfenstein 3D, Duke Nukem 3D, Celeste Classic (PICO-8 port), Outrun, ClassiCube (open-source Minecraft clone/port), OpenLara (Tomb Raider), Super Mario 64 *(very slow)*
+DOOM, Wolfenstein 3D, Duke Nukem 3D, Celeste Classic (PICO-8 port), Outrun, ClassiCube (open-source Minecraft clone/port), OpenLara (Tomb Raider), Super Mario 64 *(very slow), The Oregon Trail*
 
 > **Note:** Ports require you to provide your own legally-obtained game files. None are included.
 
