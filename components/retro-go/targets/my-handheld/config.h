@@ -2,7 +2,7 @@
 #define RG_TARGET_NAME             "MY-HANDHELD"
 
 // ROM Store
-#define RG_STORE_BASE_URL "https://<storelink>.vercel.app/roms"
+#define RG_STORE_BASE_URL "https://your-store-url.example.com/"
 
 // Storage
 #define RG_STORAGE_ROOT             "/sd"

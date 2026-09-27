@@ -718,6 +718,7 @@ void applications_init(void) {
   application("Commodore 64", "c64", "crt zip prg d64 t64", "frodo", 0);
   application("Store", "store", "none", "store", 0);
   application("Open Tyrian", "opentyrian", "cdt", "opentyrian", 0);
+  application("Oregon Trail", "oregontrail", "trail", "oregontrail", 0);
   // application("Commander Keen", "clonekeen", "keen ck1 ck2", "clonekeen", 0);
 
     // Special app to bootstrap native esp32 binaries from the SD card
