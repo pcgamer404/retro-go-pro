@@ -34,7 +34,7 @@ DOOM, Wolfenstein 3D, Duke Nukem 3D, Celeste Classic (PICO-8 port), Outrun, Clas
 Browse and download ROMs directly from the device menu.
 
 1. Set up your own backend using [pcgamer404/RG-Store-Backend](https://github.com/pcgamer404/RG-Store-Backend)
-2. Set your store URL in `components/targets/<device>.cfg`:
+2. Set your store URL in `components/targets/<device>/config.h`:
    ```c
    #define RG_STORE_BASE_URL "https://your-store-url.example.com"
    ```
