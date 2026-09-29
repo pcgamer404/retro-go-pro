@@ -692,7 +692,6 @@ void applications_init(void) {
   application("Nintendo Gameboy Advance", "gba", "gba zip", "gbsp", 0);
   application("Nintendo Game & Watch", "gw", "gw", "retro-core", 0);
   application("Super Nintendo", "snes", "smc sfc zip", "snes-go", 0);
-  application("Pocket SNES", "snes", "smc sfc zip", "pocketsnes", 0);
   application("Sega Game Gear", "gg", "gg zip", "retro-core", 0);
   application("Sega Master System", "sms", "sms sg zip", "retro-core", 0);
   application("Sega Mega Drive", "md", "md gen bin zip", "gwenesis", 0);

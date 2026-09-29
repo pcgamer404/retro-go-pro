@@ -1,4 +1,5 @@
 set(COMPONENT_SRCDIRS ".")
 set(COMPONENT_ADD_INCLUDEDIRS ".")
+set(COMPONENT_REQUIRES "snes9x retro-go")
 register_component()
-rg_setup_compile_options(-O2 -Wno-error=format)
+rg_setup_compile_options(-O3 -fomit-frame-pointer -fno-strict-aliasing -fjump-tables -ftree-switch-conversion -Wno-error=format)

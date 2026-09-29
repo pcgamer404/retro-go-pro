@@ -1,9 +1,11 @@
 #include <rg_system.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include "WSRender.h"
+#include "oswan_config.h"
 
 extern void WsInit(void);
 extern void WsReset(void);
@@ -45,6 +47,14 @@ extern int32_t rBuf;
 extern int apuBufLen(void);
 
 uint32_t lastPadState = 0;
+
+// ---- OSWAN_PROFILE (diagnostic only, no behaviour change) ----
+int64_t prof_refresh_us = 0; // time spent in RefreshLine() (updated from WS.c)
+static int64_t prof_submit_us = 0;
+static int64_t prof_run_us = 0;
+static int64_t prof_audio_us = 0;
+static int64_t prof_wall_start = 0;
+static int prof_frames = 0;
 static rg_app_t *app;
 static rg_surface_t *updates[2];
 static rg_surface_t *update;
@@ -151,13 +161,19 @@ static void update_audio(void) {
       samples[i * 2] = L;
       samples[i * 2 + 1] = R;
     }
+#if !OSWAN_NO_AUDIO
     rg_audio_submit((const rg_audio_frame_t *)samples, chunk);
+#endif
     have -= chunk;
   }
 }
 
 // Emulated video render tick
-void ws_graphics_paint(void) { SubmitFrame(); }
+void ws_graphics_paint(void) {
+  int64_t t = rg_system_timer();
+  SubmitFrame();
+  prof_submit_us += rg_system_timer() - t;
+}
 
 static bool reset_handler(bool hard) {
   rg_system_restart();
@@ -272,11 +288,30 @@ void app_main(void) {
 
     WsRun(drawFrame);
 
+    int64_t runEnd = rg_system_timer();
+    prof_run_us += runEnd - startTime;
+
     // Tick before submitting audio/syncing
-    rg_system_tick(rg_system_timer() - startTime);
+    rg_system_tick(runEnd - startTime);
 
     // Audio submission provides the pacing (sync)
     update_audio();
+    prof_audio_us += rg_system_timer() - runEnd;
+
+    if (prof_frames == 0)
+      prof_wall_start = startTime;
+    if (++prof_frames >= 150) {
+      int64_t wall = rg_system_timer() - prof_wall_start;
+      int n = prof_frames;
+      int64_t cpu_only = prof_run_us - prof_refresh_us - prof_submit_us;
+      printf("[OSWAN PROF] frames=%d fps=%.1f | per-frame ms: wall=%.2f run=%.2f "
+             "(cpu+other=%.2f refresh=%.2f submit=%.2f) audio_wait=%.2f frameskip=%d\n",
+             n, n * 1e6 / (double)wall, wall / 1000.0 / n, prof_run_us / 1000.0 / n,
+             cpu_only / 1000.0 / n, prof_refresh_us / 1000.0 / n,
+             prof_submit_us / 1000.0 / n, prof_audio_us / 1000.0 / n, (int)app->frameskip);
+      prof_frames = 0;
+      prof_run_us = prof_refresh_us = prof_submit_us = prof_audio_us = 0;
+    }
 
     if (skipCounter >= app->frameskip) {
       skipCounter = 0;

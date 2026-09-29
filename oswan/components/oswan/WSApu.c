@@ -7,6 +7,7 @@
 #include "WSApu.h"
 #include "startup.h"
 #include <esp_attr.h>
+#include "oswan_config.h"
 
 // -----------------------------------------------------------------------------
 // Config
@@ -355,7 +356,9 @@ void apuWaveSet(void)
 
   voice = ws_apuVoice(0);
   ws_apuhVoice(0, &hvoice);
+#if !OSWAN_NO_AUDIO
   WsWaveSet(voice, hvoice);
+#endif
   NCSR = apuShiftReg();
 }
 

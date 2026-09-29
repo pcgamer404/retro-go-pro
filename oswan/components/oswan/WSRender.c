@@ -554,7 +554,7 @@ IRAM_ATTR void RefreshLine(int Line) {
             else { if (*pW) { pSWrBuf++; continue; } }
           }
           if (!idx && is_transparent_0) { pSWrBuf++; continue; }
-          if ((*pZ) && (!sprite_layer)) { pSWrBuf++; continue; }
+          if ((*pZ) && (!sprite_layer)) { /* Rockman EXE WS sprite priority compatibility */ }
           *pSWrBuf++ = pal[idx];
         }
       } else {
@@ -565,7 +565,7 @@ IRAM_ATTR void RefreshLine(int Line) {
             else { if (*pW) { pSWrBuf++; continue; } }
           }
           if (!idx && is_transparent_0) { pSWrBuf++; continue; }
-          if ((*pZ) && (!sprite_layer)) { pSWrBuf++; continue; }
+          if ((*pZ) && (!sprite_layer)) { /* Rockman EXE WS sprite priority compatibility */ }
           *pSWrBuf++ = pal[idx];
         }
       }

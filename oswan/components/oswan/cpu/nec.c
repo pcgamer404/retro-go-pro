@@ -163,7 +163,7 @@ void nec_int(DWORD wektor)
     }
 }
 
-static void nec_interrupt(unsigned int_num, BOOLEAN md_flag)
+static void IRAM_ATTR nec_interrupt(unsigned int_num, BOOLEAN md_flag)
 {
     UINT32 dest_seg, dest_off;
 
@@ -189,7 +189,7 @@ static void nec_interrupt(unsigned int_num, BOOLEAN md_flag)
 /*                             OPCODES                                      */
 /****************************************************************************/
 
-#define OP(num,func_name) static void func_name(void)
+#define OP(num,func_name) static void IRAM_ATTR func_name(void)
 
 
 OP( 0x00, i_add_br8  ) { DEF_br8;   ADDB;   PutbackRMByte(ModRM,dst);   CLKM(3,1);      }
@@ -875,7 +875,7 @@ OP( 0xff, i_ffpre ) { UINT32 tmp, tmp1; GetModRM; tmp=GetRMWord(ModRM);
     }
 }
 
-static void i_invalid(void)
+static void IRAM_ATTR i_invalid(void)
 {
     CLK(10);
 }

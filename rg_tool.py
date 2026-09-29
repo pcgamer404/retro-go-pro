@@ -14,8 +14,8 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "my-handheld")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM4")
-# DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater store retro-core snes-go pocketsnes gbsp gwenesis fmsx ngp-go oswan pico8 frodo stella celeste openlara prboom-go duke3d-go wolf4sdl quake-go rott cannonball classicube sm64-go oregontrail")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater store retro-core snes-go fmsx ngp-go pico8 oswan celeste openlara opentyrian")
+# DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater store retro-core snes-go gbsp gwenesis fmsx ngp-go oswan pico8 frodo stella celeste openlara prboom-go duke3d-go wolf4sdl quake-go rott cannonball classicube sm64-go oregontrail")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater store retro-core snes-go gbsp fmsx ngp-go pico8 oswan celeste openlara opentyrian")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 PROJECT_APPS = {
@@ -25,7 +25,6 @@ PROJECT_APPS = {
   'retro-core':   [0, 16, 1572864],
   'store':        [0, 16, 655360],
   'snes-go':      [0, 16, 2097152],
-  'pocketsnes':   [0, 16, 655360],
   'gbsp':         [0, 16, 851968],
   'gwenesis':     [0, 16, 1048576],
   'fmsx':         [0, 16, 655360],

@@ -793,6 +793,7 @@ static int Joyz = 0x0000;
         } \
     }
 
+extern int64_t prof_refresh_us;
 int WsRun(bool drawFrame) {
   static int period = IPeriod * 2;
   int cycle;
@@ -821,7 +822,7 @@ int WsRun(bool drawFrame) {
         if (LCDSLP & 0x01) {
             if (drawFrame) {
                 if (RSTRL < 144) {
-                    RefreshLine(RSTRL);
+                    { int64_t _pt = rg_system_timer(); RefreshLine(RSTRL); prof_refresh_us += rg_system_timer() - _pt; }
                 }
                 if (RSTRL == 144) {
                     ws_graphics_paint();

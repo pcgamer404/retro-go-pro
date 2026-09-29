@@ -1500,7 +1500,9 @@ IRAM_ATTR void execute_arm(u32 cycles)
     {
 arm_loop:
 
-       collapse_flags();
+       /* Keep N/Z/C/V in locals during the hot ARM loop.  reg[REG_CPSR]
+        * is synchronized only when an operation actually needs the full CPSR
+        * (PSR/SWI/interrupt paths) or when leaving the execution loop. */
 
        /* Process cheats if we are about to execute the cheat hook */
        if (reg[REG_PC] == cheat_master_hook)
@@ -1513,6 +1515,9 @@ arm_loop:
        opcode = readaddress32(pc_address_block, (reg[REG_PC] & 0x7FFF));
        condition = opcode >> 28;
 
+       /* AL (0xE) is by far the common ARM condition. Avoid entering the
+        * 16-way condition switch for unconditional instructions. */
+       if(condition != 0xE)
        switch(condition)
        {
           case 0x0:

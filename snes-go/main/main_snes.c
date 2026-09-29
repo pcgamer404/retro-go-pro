@@ -5,8 +5,8 @@
 #define AUDIO_SAMPLE_RATE   (32040)
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 50 + 1)
 
-// #define FRAME_DOUBLE_BUFFERING
-// #define AUDIO_DOUBLE_BUFFERING
+#define FRAME_DOUBLE_BUFFERING
+#define AUDIO_DOUBLE_BUFFERING
 #define USE_AUDIO_TASK
 
 typedef struct
@@ -23,20 +23,19 @@ enum {
     KEYMAP_TYPE_A = 0,
     KEYMAP_TYPE_B,
     KEYMAP_TYPE_C,
-    KEYMAP_REGULAR,
-	KEYMAP_TAP_HOLD
+    KEYMAP_REGULAR
 };
 
 static const keymap_t KEYMAPS[] = {
 	[KEYMAP_TYPE_A] = {"Type A", {
 		{SNES_A_MASK, RG_KEY_A, 0},
 		{SNES_B_MASK, RG_KEY_B, 0},
-		{SNES_X_MASK, RG_KEY_X, 0},
-		{SNES_Y_MASK, RG_KEY_Y, 0},
-		{SNES_TL_MASK, RG_KEY_SELECT, RG_KEY_X},
-		{SNES_TR_MASK, RG_KEY_SELECT, RG_KEY_A},
-		{SNES_START_MASK, RG_KEY_START, 0},
-		{SNES_SELECT_MASK, RG_KEY_SELECT, 0},
+		{SNES_X_MASK, RG_KEY_START, 0},
+		{SNES_Y_MASK, RG_KEY_SELECT, 0},
+		{SNES_TL_MASK, RG_KEY_B, RG_KEY_MENU},
+		{SNES_TR_MASK, RG_KEY_A, RG_KEY_MENU},
+		{SNES_START_MASK, RG_KEY_START, RG_KEY_MENU},
+		{SNES_SELECT_MASK, RG_KEY_SELECT, RG_KEY_MENU},
 		{SNES_UP_MASK, RG_KEY_UP, 0},
 		{SNES_DOWN_MASK, RG_KEY_DOWN, 0},
 		{SNES_LEFT_MASK, RG_KEY_LEFT, 0},
@@ -56,18 +55,20 @@ static const keymap_t KEYMAPS[] = {
 		{SNES_LEFT_MASK, RG_KEY_LEFT, 0},
 		{SNES_RIGHT_MASK, RG_KEY_RIGHT, 0},
 	}},
-	
-	[KEYMAP_TAP_HOLD] = {"Tap/Hold", {
+	[KEYMAP_TYPE_C] = {"Type C", {
 		{SNES_A_MASK, RG_KEY_A, 0},
 		{SNES_B_MASK, RG_KEY_B, 0},
-		{SNES_X_MASK, RG_KEY_X, 0},
-		{SNES_Y_MASK, RG_KEY_Y, 0},
+		{SNES_X_MASK, 0, 0},
+		{SNES_Y_MASK, 0, 0},
+		{SNES_TL_MASK, 0, 0},
+		{SNES_TR_MASK, 0, 0},
+		{SNES_START_MASK, RG_KEY_START, 0},
+		{SNES_SELECT_MASK, RG_KEY_SELECT, 0},
 		{SNES_UP_MASK, RG_KEY_UP, 0},
 		{SNES_DOWN_MASK, RG_KEY_DOWN, 0},
 		{SNES_LEFT_MASK, RG_KEY_LEFT, 0},
 		{SNES_RIGHT_MASK, RG_KEY_RIGHT, 0},
-}},
-
+	}},
     [KEYMAP_REGULAR] = {"Regular", {
 		{SNES_A_MASK, RG_KEY_A, 0},
 		{SNES_B_MASK, RG_KEY_B, 0},
@@ -95,11 +96,13 @@ static const char *SNES_BUTTONS[] = {
 static rg_app_t *app;
 static rg_surface_t *updates[2];
 static rg_surface_t *currentUpdate;
+static rg_surface_t *lastCompleteUpdate;
 static rg_audio_sample_t *audioBuffers[2];
 static rg_audio_sample_t *currentAudioBuffer;
 
 #ifdef USE_AUDIO_TASK
 static rg_task_t *audio_task_handle;
+static const size_t AUDIO_TASK_QUEUE_DEPTH = 2;
 #endif
 
 static bool sound_enabled = true;
@@ -121,7 +124,8 @@ static void update_keymap(int id)
 
 static bool screenshot_handler(const char *filename, int width, int height)
 {
-    return rg_surface_save_image_file(currentUpdate, filename, width, height);
+    rg_surface_t *surface = lastCompleteUpdate ? lastCompleteUpdate : currentUpdate;
+    return surface && rg_surface_save_image_file(surface, filename, width, height);
 }
 
 static bool save_state_handler(const char *filename)
@@ -144,7 +148,9 @@ static void event_handler(int event, void *arg)
 {
     if (event == RG_EVENT_REDRAW)
     {
-        rg_display_submit(currentUpdate, 0);
+        rg_surface_t *surface = lastCompleteUpdate ? lastCompleteUpdate : currentUpdate;
+        if (surface)
+            rg_display_submit(surface, 0);
     }
 }
 
@@ -257,9 +263,11 @@ bool S9xInitDisplay(void)
     GFX.Pitch = SNES_WIDTH * 2;
     GFX.ZPitch = SNES_WIDTH;
     GFX.Screen = currentUpdate->data;
-    GFX.SubScreen = malloc(GFX.Pitch * SNES_HEIGHT_EXTENDED);
-    GFX.ZBuffer = malloc(GFX.ZPitch * SNES_HEIGHT_EXTENDED);
-    GFX.SubZBuffer = malloc(GFX.ZPitch * SNES_HEIGHT_EXTENDED);
+    // Keep the large secondary surface in PSRAM and the hot main Z-buffer
+    // in internal RAM. This mirrors the proven PocketSNES memory layout.
+    GFX.SubScreen = (uint8_t *)rg_alloc(GFX.Pitch * SNES_HEIGHT_EXTENDED, MEM_SLOW);
+    GFX.ZBuffer = (uint8_t *)rg_alloc(GFX.ZPitch * SNES_HEIGHT_EXTENDED, MEM_FAST);
+    GFX.SubZBuffer = (uint8_t *)rg_alloc(GFX.ZPitch * SNES_HEIGHT_EXTENDED, MEM_SLOW);
     return GFX.Screen && GFX.SubScreen && GFX.ZBuffer && GFX.SubZBuffer;
 }
 
@@ -267,38 +275,21 @@ void S9xDeinitDisplay(void)
 {
 }
 
-#define HOLD_THRESHOLD_US (350 * 1000) // 350ms
-static int64_t select_t0 = 0, start_t0 = 0;
-
 uint32_t S9xReadJoypad(int32_t port)
 {
-    if (port != 0) return 0;
+    if (port != 0)
+        return 0;
+
     uint32_t joystick = rg_input_read_gamepad();
     uint32_t joypad = 0;
 
-    for (int i = 0; i < RG_COUNT(keymap.keys); ++i) {
+    for (int i = 0; i < RG_COUNT(keymap.keys); ++i)
+    {
         uint32_t bitmask = keymap.keys[i].local_mask | keymap.keys[i].mod_mask;
         if (bitmask && bitmask == (joystick & bitmask))
+        {
             joypad |= keymap.keys[i].snes9x_mask;
-    }
-
-    if (keymap_id == KEYMAP_TAP_HOLD)
-    {
-        int64_t now = rg_system_timer();
-        bool sel = joystick & RG_KEY_SELECT, sta = joystick & RG_KEY_START;
-
-        if (sel && !select_t0) select_t0 = now;
-        if (!sel) select_t0 = 0;
-        if (sta && !start_t0) start_t0 = now;
-        if (!sta) start_t0 = 0;
-
-        bool sel_hold = sel && (now - select_t0) > HOLD_THRESHOLD_US;
-        bool sta_hold = sta && (now - start_t0) > HOLD_THRESHOLD_US;
-
-        if (sel && !sel_hold) joypad |= SNES_TL_MASK;
-        if (sta && !sta_hold) joypad |= SNES_TR_MASK;
-        if (sel_hold) joypad |= SNES_SELECT_MASK;
-        if (sta_hold) joypad |= SNES_START_MASK;
+        }
     }
 
     return joypad;
@@ -381,14 +372,17 @@ void app_main(void)
 
     // Allocate surfaces and audio buffers
     updates[0] = rg_surface_create(SNES_WIDTH, SNES_HEIGHT_EXTENDED, RG_PIXEL_565_LE, 0);
-    updates[0]->height = SNES_HEIGHT;
+    if (updates[0])
+        updates[0]->height = SNES_HEIGHT;
 #ifdef FRAME_DOUBLE_BUFFERING
     updates[1] = rg_surface_create(SNES_WIDTH, SNES_HEIGHT_EXTENDED, RG_PIXEL_565_LE, 0);
-    updates[1]->height = SNES_HEIGHT;
+    if (updates[1])
+        updates[1]->height = SNES_HEIGHT;
 #else
     updates[1] = updates[0];
 #endif
     currentUpdate = updates[0];
+    lastCompleteUpdate = NULL;
 
 #ifdef AUDIO_DOUBLE_BUFFERING
     audioBuffers[0] = (rg_audio_sample_t *)calloc(AUDIO_BUFFER_LENGTH, 4);
@@ -404,7 +398,7 @@ void app_main(void)
 
 #ifdef USE_AUDIO_TASK
     // Set up multicore audio
-    audio_task_handle = rg_task_create("snes_audio", &audio_task, NULL, 2048, 1, RG_TASK_PRIORITY_6, 1);
+    audio_task_handle = rg_task_create("snes_audio", &audio_task, NULL, 2048, AUDIO_TASK_QUEUE_DEPTH, RG_TASK_PRIORITY_6, 1);
     RG_ASSERT(audio_task_handle, "Failed to create audio task!");
 #endif
 
@@ -504,6 +498,7 @@ void app_main(void)
         {
             slowFrame = rg_display_is_busy();
             rg_display_submit(currentUpdate, 0);
+            lastCompleteUpdate = currentUpdate;
             currentUpdate = updates[currentUpdate == updates[0]];
         }
 

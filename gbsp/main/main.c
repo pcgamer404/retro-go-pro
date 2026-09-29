@@ -1,12 +1,19 @@
 #include <rg_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 
 #include "../components/gbsp-libretro/common.h"
 #include "../components/gbsp-libretro/memmap.h"
 #include "../components/gbsp-libretro/sound.h"
 #include "../components/gbsp-libretro/gba_memory.h"
 #include "../components/gbsp-libretro/gba_cc_lut.h"
+
+/* gba_memory.h exposes backup/eeprom state but not the Flash bank count. */
+extern u32 flash_bank_cnt;
 
 #define AUDIO_SAMPLE_RATE (GBA_SOUND_FREQUENCY)
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
@@ -26,6 +33,140 @@ static rg_surface_t *currentUpdate;
 static rg_app_t *app;
 
 static const char *SETTING_SOUND_EMULATION = "sound";
+
+/* Cartridge battery-save persistence.
+ * gpSP keeps SRAM/Flash/EEPROM contents in gamepak_backup, but the original
+ * Retro-Go frontend only implemented emulator save states.  Persist the
+ * backup buffer on the SD card so battery saves survive a restart.
+ */
+#define GP_SAVE_BUF_SIZE (1024 * 128)
+#define GP_SAVE_CHECK_MS 3000
+
+static char gp_save_path[320];
+static uint32_t gp_save_sum_flushed;
+static uint32_t gp_save_sum_prev;
+static bool gp_save_prev_differs;
+static TickType_t gp_save_last_check;
+static bool gp_save_enabled;
+
+static uint32_t gp_save_checksum(void)
+{
+    const uint32_t *p = (const uint32_t *)gamepak_backup;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < GP_SAVE_BUF_SIZE / 4; ++i)
+        h = (h ^ p[i]) * 16777619u;
+    return h;
+}
+
+static void gp_save_make_path(const char *rom_path)
+{
+    // Keep the battery save beside the ROM on the SD card.  This matches the
+    // usual Retro-Go/ROM workflow and avoids relying on a separate save mount.
+    snprintf(gp_save_path, sizeof(gp_save_path), "%s", rom_path);
+    char *dot = strrchr(gp_save_path, '.');
+    if (dot)
+        *dot = '\0';
+    strncat(gp_save_path, ".sav", sizeof(gp_save_path) - strlen(gp_save_path) - 1);
+}
+
+static void gp_save_init(const char *rom_path)
+{
+    gp_save_make_path(rom_path);
+    gp_save_enabled = false;
+
+    FILE *f = fopen(gp_save_path, "rb");
+    if (f)
+    {
+        memset(gamepak_backup, 0xff, GP_SAVE_BUF_SIZE);
+        size_t got = fread(gamepak_backup, 1, GP_SAVE_BUF_SIZE, f);
+        fclose(f);
+        RG_LOGI("gpSP save: loaded %u bytes from %s", (unsigned)got, gp_save_path);
+    }
+    else
+    {
+        RG_LOGI("gpSP save: no existing save at %s", gp_save_path);
+    }
+
+    gp_save_enabled = true;
+    gp_save_sum_flushed = gp_save_checksum();
+    gp_save_sum_prev = gp_save_sum_flushed;
+    gp_save_prev_differs = false;
+    gp_save_last_check = xTaskGetTickCount();
+}
+
+static size_t gp_save_size(void)
+{
+    switch (backup_type)
+    {
+        case BACKUP_SRAM: return 0x8000;
+        case BACKUP_FLASH: return (flash_bank_cnt == FLASH_SIZE_64KB) ? 0x10000 : 0x20000;
+        case BACKUP_EEPROM: return (eeprom_size == EEPROM_512_BYTE) ? 0x200 : 0x2000;
+        default: return GP_SAVE_BUF_SIZE;
+    }
+}
+
+static bool gp_save_flush(void)
+{
+    if (!gp_save_enabled)
+        return false;
+
+    char tmp[336];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", gp_save_path);
+    FILE *f = fopen(tmp, "wb");
+    if (!f)
+    {
+        RG_LOGE("gpSP save: cannot open %s", tmp);
+        return false;
+    }
+
+    size_t save_size = gp_save_size();
+    size_t put = fwrite(gamepak_backup, 1, save_size, f);
+    fflush(f);
+    fclose(f);
+    if (put != save_size)
+    {
+        remove(tmp);
+        RG_LOGE("gpSP save: short write %u/%u", (unsigned)put, (unsigned)save_size);
+        return false;
+    }
+
+    remove(gp_save_path);
+    if (rename(tmp, gp_save_path) != 0)
+    {
+        remove(tmp);
+        RG_LOGE("gpSP save: rename failed for %s", gp_save_path);
+        return false;
+    }
+
+    gp_save_sum_flushed = gp_save_checksum();
+    gp_save_sum_prev = gp_save_sum_flushed;
+    gp_save_prev_differs = false;
+    RG_LOGI("gpSP save: flushed %u bytes to %s", (unsigned)save_size, gp_save_path);
+    return true;
+}
+
+static void gp_save_tick(void)
+{
+    if (!gp_save_enabled)
+        return;
+
+    TickType_t now = xTaskGetTickCount();
+    if ((now - gp_save_last_check) * portTICK_PERIOD_MS < GP_SAVE_CHECK_MS)
+        return;
+    gp_save_last_check = now;
+
+    uint32_t sum = gp_save_checksum();
+    bool differs = sum != gp_save_sum_flushed;
+    /* Require the checksum to remain unchanged across two checks. This avoids
+     * writing while a game is still in the middle of a multi-frame save. */
+    if (differs && gp_save_prev_differs && sum == gp_save_sum_prev)
+        gp_save_flush();
+    else
+    {
+        gp_save_sum_prev = sum;
+        gp_save_prev_differs = differs;
+    }
+}
 
 void netpacket_poll_receive()
 {
@@ -89,6 +230,8 @@ int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned id)
     if (joystick & RG_KEY_RIGHT) val |= (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT);
     if (joystick & RG_KEY_START) val |= (1 << RETRO_DEVICE_ID_JOYPAD_START);
     if (joystick & RG_KEY_SELECT) val |= (1 << RETRO_DEVICE_ID_JOYPAD_SELECT);
+	if (joystick & RG_KEY_X) val |= (1 << RETRO_DEVICE_ID_JOYPAD_X);
+    if (joystick & RG_KEY_Y) val |= (1 << RETRO_DEVICE_ID_JOYPAD_Y);
     if (joystick & RG_KEY_B) val |= (1 << RETRO_DEVICE_ID_JOYPAD_B);
     if (joystick & RG_KEY_A) val |= (1 << RETRO_DEVICE_ID_JOYPAD_A);
     return val;
@@ -160,6 +303,8 @@ void app_main(void)
         RG_PANIC("Could not load the game file.");
     }
 
+    gp_save_init(app->romPath);
+
     RG_LOGI("reset_gba");
     reset_gba();
 
@@ -181,6 +326,7 @@ void app_main(void)
 
         if (joystick & (RG_KEY_MENU | RG_KEY_OPTION))
         {
+            gp_save_flush();
             if (joystick & RG_KEY_MENU)
                 rg_gui_game_menu();
             else
@@ -197,6 +343,8 @@ void app_main(void)
 
         if (!skip_next_frame)
             rg_display_submit(currentUpdate, 0);
+
+        gp_save_tick();
 
         size_t frames_count = sound_read_samples((s16 *)mixbuffer, AUDIO_BUFFER_LENGTH);
         // RG_TIMER_LAP("sound_read_samples");
