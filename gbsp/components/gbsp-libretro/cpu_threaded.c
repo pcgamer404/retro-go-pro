@@ -35,7 +35,7 @@
 u8 *last_rom_translation_ptr = NULL;
 u8 *last_ram_translation_ptr = NULL;
 
-#if defined(MMAP_JIT_CACHE)
+#if defined(MMAP_JIT_CACHE) || defined(XTENSA_ARCH)   /* xtensa: allocated by the app (xjit) */
 u8* rom_translation_cache;
 u8* ram_translation_cache;
 u8 *rom_translation_ptr;
@@ -78,6 +78,10 @@ typedef struct
   u32 next_entry;
 } hashhdr_type;
 
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+#include "esp_attr.h"
+EXT_RAM_BSS_ATTR   /* 256 KB: PSRAM (internal RAM is short on the ESP32-S3) */
+#endif
 u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
 
 typedef struct
@@ -215,7 +219,9 @@ typedef struct
   u32 offset = opcode & 0x07FF                                                \
 
 /* Include the right emitter headers */
-#if defined(MIPS_ARCH)
+#if defined(XTENSA_ARCH)
+  #include "xtensa/xtensa_emit.h"   /* esp32-emu-turbo */
+#elif defined(MIPS_ARCH)
   #include "mips/mips_emit.h"
 #elif defined(ARM_ARCH)
   #include "arm/arm_emit.h"
@@ -250,6 +256,8 @@ typedef struct
   void platform_cache_sync(void *baseaddr, void *endptr) {
     __clear_cache(baseaddr, endptr);
   }
+#elif defined(XTENSA_ARCH)
+  /* xtensa/xtensa_stub.c */
 #elif defined(MIPS_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
     __builtin___clear_cache(baseaddr, endptr);
@@ -2547,8 +2555,56 @@ inline static ramtag_type* get_ram_tag(u16 tagval) {
   pc &= ~0x01                                                                 \
 
 
+/* Xtensa: the ROM block hash and the block headers are in PSRAM; a small
+   direct-mapped table in internal RAM answers most lookups (indirect
+   branches: bx lr, pop {pc}) without touching them. Emptied with the ROM
+   translation cache. */
+#ifdef XTENSA_ARCH
+#define XT_L1_N 512
+static u32 xt_l1_key[XT_L1_N];
+static u8 *xt_l1_ptr[XT_L1_N];
+#define XT_L1_SLOT(key) (((key) ^ ((key) >> 9)) & (XT_L1_N - 1))
+static void xt_l1_clear(void)
+{
+  memset(xt_l1_key, 0xFF, sizeof(xt_l1_key));   /* ~0: never a key (pc | thumb) */
+}
+#define XT_L1_LOOKUP(key)                                                     \
+  { u32 l1_ = XT_L1_SLOT(key);                                                \
+    if (xt_l1_key[l1_] == (key)) return xt_l1_ptr[l1_]; }
+#define XT_L1_FILL(key, ptr)                                                  \
+  { u32 l1_ = XT_L1_SLOT(key); xt_l1_key[l1_] = (key); xt_l1_ptr[l1_] = (ptr); }
+#else
+#define XT_L1_LOOKUP(key)
+#define XT_L1_FILL(key, ptr)
+#endif
+
+/* RAM blocks translated in this frame: a game that rewrites its own code
+   in a loop (NFS Underground: ~3000 per frame) is better off interpreted
+   (execute_arm_translate gives up, gbsp/main/main.c switches) */
+#ifdef XTENSA_ARCH
+u32 xt_ram_translations;
+#define XT_COUNT_RAM_TRANSLATION() (xt_ram_translations++)
+#else
+#define XT_COUNT_RAM_TRANSLATION() ((void)0)
+#endif
+
+/* GBAPROF: cycles spent translating (the dynarec's warm-up and new code) */
+#if defined(GBAPROF) && defined(XTENSA_ARCH)
+#include "esp_cpu.h"
+u32 xt_prof_translate_cycles, xt_prof_translate_blocks, xt_prof_tr_region[16], xt_prof_tr_pc[4], xt_prof_rom_flush;
+#define TIMED_TRANSLATE(type, pc, ram)                                        \
+  ({ u32 c0_ = esp_cpu_get_cycle_count();                                     \
+     xt_prof_tr_region[((pc) >> 24) & 15]++;                                  \
+     xt_prof_tr_pc[xt_prof_translate_blocks & 3] = (pc);                      \
+     bool r_ = translate_block_##type(pc, ram);                               \
+     xt_prof_translate_cycles += esp_cpu_get_cycle_count() - c0_;             \
+     xt_prof_translate_blocks++; r_; })
+#else
+#define TIMED_TRANSLATE(type, pc, ram) translate_block_##type(pc, ram)
+#endif
+
 #define block_lookup_translate_builder(type)                                  \
-u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
+XT_HOT u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 {                                                                             \
   u8 pcregion = (pc >> 24);                                                   \
   u16 *location;                                                              \
@@ -2578,7 +2634,8 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         bool result;                                                          \
         u8 *blkptr = ram_translation_ptr + block_prologue_size;               \
         trentry->offset_##type = blkptr - ram_translation_cache;              \
-        result = translate_block_##type(pc, true);                            \
+        XT_COUNT_RAM_TRANSLATION();                                           \
+        result = TIMED_TRANSLATE(type, pc, true);                             \
                                                                               \
         if (result)                                                           \
           return blkptr;                                                      \
@@ -2592,6 +2649,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
     case 0x8 ... 0xD:                                                         \
     {                                                                         \
       u32 key = pc | thumb;                                                   \
+      XT_L1_LOOKUP(key);                                                      \
       u32 hash_target = ((key * 2654435761U) >> (32 - ROM_BRANCH_HASH_BITS))  \
                                               & (ROM_BRANCH_HASH_SIZE - 1);   \
                                                                               \
@@ -2602,8 +2660,12 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
       {                                                                       \
         bhdr = (hashhdr_type*)&rom_translation_cache[blk_offset];             \
         if(bhdr->pc_value == key)                                             \
-          return &rom_translation_cache[                                      \
+        {                                                                     \
+          u8 *found_ = &rom_translation_cache[                                \
                   blk_offset + sizeof(hashhdr_type) + block_prologue_size];   \
+          XT_L1_FILL(key, found_);                                            \
+          return found_;                                                      \
+        }                                                                     \
                                                                               \
         blk_offset = bhdr->next_entry;                                        \
         blk_offset_addr = &bhdr->next_entry;                                  \
@@ -2618,7 +2680,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         *blk_offset_addr = (u32)(rom_translation_ptr - rom_translation_cache);\
         rom_translation_ptr += sizeof(hashhdr_type);                          \
         blkptr = rom_translation_ptr + block_prologue_size;                   \
-        result = translate_block_##type(pc, false);                           \
+        result = TIMED_TRANSLATE(type, pc, false);                            \
                                                                               \
         if (result)                                                           \
           return blkptr;                                                      \
@@ -2637,7 +2699,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 block_lookup_translate_builder(arm);
 block_lookup_translate_builder(thumb);
 
-u8 function_cc *block_lookup_address_dual(u32 pc)
+XT_HOT u8 function_cc *block_lookup_address_dual(u32 pc)
 {
   u32 thumb = pc & 0x01;
   if(thumb) {
@@ -2651,7 +2713,7 @@ u8 function_cc *block_lookup_address_dual(u32 pc)
   }
 }
 
-u8 function_cc *block_lookup_address_arm(u32 pc)
+XT_HOT u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   unsigned i;
   for (i = 0; i < 4; i++) {
@@ -2667,7 +2729,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   return NULL;
 }
 
-u8 function_cc *block_lookup_address_thumb(u32 pc)
+XT_HOT u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   unsigned i;
   for (i = 0; i < 4; i++) {
@@ -3089,6 +3151,13 @@ bool translate_block_arm(u32 pc, bool ram_region)
   while(pc != block_end_pc)
   {
     block_data[block_data_position].block_offset = translation_ptr;
+#if defined(XTENSA_ARCH) && defined(RETRO_GO)
+    if (m4a_dynarec_head(pc))
+    {
+      generate_cycle_update();
+      xt_m4a_hook(pc);
+    }
+#endif
     arm_base_cycles();
 
     if (pc == cheat_master_hook)
@@ -3130,6 +3199,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
   generate_translation_gate(arm);
+#ifdef XTENSA_ARCH
+  generate_block_cold();
+#endif
 
   for(i = 0; i < block_exit_position; i++)
   {
@@ -3156,6 +3228,29 @@ bool translate_block_arm(u32 pc, bool ram_region)
     }
   }
 
+#ifdef XTENSA_ARCH
+  /* Xtensa code is 2/3-byte instructions: the next block's header (u32
+     words, and a 32-bit store ignores the low address bits) must be aligned */
+  translation_ptr = (u8 *)(((uintptr_t)translation_ptr + 3) & ~(uintptr_t)3);
+#endif
+#ifdef XT_RAMLOG
+  if (ram_region)
+  {
+    printf("RAMBLK %s pc %08x off %05x len %u:", "arm", (unsigned)block_start_pc,
+           (unsigned)(ram_translation_ptr - ram_translation_cache), (unsigned)(translation_ptr - ram_translation_ptr));
+    for (u8 *q = ram_translation_ptr; q < translation_ptr; q++) printf(" %02x", *q);
+    printf("\n");
+  }
+#endif
+#ifdef XT_RAMLOG
+  if (ram_region)
+  {
+    printf("RAMBLK %s pc %08x off %05x len %u:", "thumb", (unsigned)block_start_pc,
+           (unsigned)(ram_translation_ptr - ram_translation_cache), (unsigned)(translation_ptr - ram_translation_ptr));
+    for (u8 *q = ram_translation_ptr; q < translation_ptr; q++) printf(" %02x", *q);
+    printf("\n");
+  }
+#endif
   if (ram_region)
     ram_translation_ptr = translation_ptr;
   else
@@ -3287,6 +3382,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
   generate_translation_gate(thumb);
+#ifdef XTENSA_ARCH
+  generate_block_cold();
+#endif
 
   for(i = 0; i < block_exit_position; i++)
   {
@@ -3313,6 +3411,11 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     }
   }
 
+#ifdef XTENSA_ARCH
+  /* Xtensa code is 2/3-byte instructions: the next block's header (u32
+     words, and a 32-bit store ignores the low address bits) must be aligned */
+  translation_ptr = (u8 *)(((uintptr_t)translation_ptr + 3) & ~(uintptr_t)3);
+#endif
   if (ram_region)
     ram_translation_ptr = translation_ptr;
   else
@@ -3343,6 +3446,9 @@ void init_bios_hooks(void)
   rom_cache_watermark = (u32)(rom_translation_ptr - rom_translation_cache);
 }
 
+#ifdef XTENSA_ARCH
+int xt_ram_rewind;
+#endif
 void flush_translation_cache_ram(void)
 {
   /* Flushes RAM caches avoiding doing too much work (ie. wiping unused memory) */
@@ -3351,8 +3457,21 @@ void flush_translation_cache_ram(void)
    flush_ram_count, reg[REG_PC], iwram_code_min, iwram_code_max,
    ewram_code_min, ewram_code_max);*/
 
-  last_ram_translation_ptr = ram_translation_cache;
-  ram_translation_ptr = ram_translation_cache;
+#ifdef XTENSA_ARCH
+  /* A flush from inside a helper (self-modifying code, an I/O write, a full
+     cache during an indirect branch) must not rewrite the block the helper
+     returns into: the tags are cleared (every block is looked up and
+     translated again) but new code is appended after the old one, which
+     stays intact. execute_arm_translate rewinds at the start of a frame, when
+     no translated code is running (xt_ram_rewind); a nearly full cache
+     rewinds here. */
+  if (xt_ram_rewind ||
+      ram_translation_ptr >= ram_translation_cache + RAM_TRANSLATION_CACHE_SIZE / 8 * 7)
+#endif
+  {
+    last_ram_translation_ptr = ram_translation_cache;
+    ram_translation_ptr = ram_translation_cache;
+  }
 
   // Proceed to clean the SMC area if needed
   // (also try to memset as little as possible for performance)
@@ -3388,6 +3507,12 @@ void flush_translation_cache_rom(void)
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+#ifdef XTENSA_ARCH
+  xt_l1_clear();
+#endif
+#if defined(GBAPROF) && defined(XTENSA_ARCH)
+  xt_prof_rom_flush++;
+#endif
 }
 
 void init_dynarec_caches(void)
@@ -3395,6 +3520,9 @@ void init_dynarec_caches(void)
   /* Initialize caches so that we can start initalizing the emitter. */
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+#ifdef XTENSA_ARCH
+  xt_l1_clear();
+#endif
 
   ram_translation_ptr = last_ram_translation_ptr = &ram_translation_cache[0];
   memset(iwram, 0, 0x8000);

@@ -155,6 +155,16 @@ bool gba_load_state(const void* src)
 
   instruction_count = 0;
   reg[OAM_UPDATED] = 1;
+#ifdef RETRO_GO
+  {
+    extern u8 gbsp_pal_dirty;   /* video.cpp: the renderer's palette copy */
+    gbsp_pal_dirty = 1;
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+    extern void gbsp_vram_mark_all(void);   /* video.cpp: the renderer's VRAM copy */
+    gbsp_vram_mark_all();
+#endif
+  }
+#endif
 
   return true;
 }

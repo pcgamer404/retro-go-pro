@@ -44,8 +44,8 @@ typedef struct
 } map;
 
 static const map btn_map[] = {
-   { RETRO_DEVICE_ID_JOYPAD_X,      BUTTON_L },
-   { RETRO_DEVICE_ID_JOYPAD_Y,      BUTTON_R },
+   { RETRO_DEVICE_ID_JOYPAD_L,      BUTTON_L },
+   { RETRO_DEVICE_ID_JOYPAD_R,      BUTTON_R },
    { RETRO_DEVICE_ID_JOYPAD_DOWN,   BUTTON_DOWN },
    { RETRO_DEVICE_ID_JOYPAD_UP,     BUTTON_UP },
    { RETRO_DEVICE_ID_JOYPAD_LEFT,   BUTTON_LEFT },

@@ -25,6 +25,69 @@ extern "C" {
 u16* gba_screen_pixels = NULL;
 
 #define get_screen_pixels()   gba_screen_pixels
+
+#if defined(XTENSA_ARCH) && defined(RETRO_GO) && defined(ESP_PLATFORM)
+/* The renderer (core 1, drawing lines late) reads its own copy of VRAM:
+   CPU and DMA write the live VRAM and mark 1 KB pages dirty, and the dirty
+   pages are copied into the renderer's copy when the next line is queued,
+   after the lines queued before the write are drawn. A VRAM write no longer
+   waits for core 1 (Sonic's vblank DMA, TMNT's OBJ tiles: ~2 ms/frame). */
+#define GBSP_RVRAM 1
+extern "C" { u8 *gbsp_rvram; u32 gbsp_vram_dirty[3]; u8 gbsp_vram_dirty_any; void gbsp_vram_mark_all(void); }
+static inline u8 *gbsp_live_vram(void) { return vram; }   /* before vram is redefined */
+#define live_vram gbsp_live_vram()
+#undef vram
+#define vram gbsp_rvram   /* everything below is the renderer's view */
+#endif
+
+#ifdef RETRO_GO
+/* esp32-emu-turbo: the scanline renderer reads a snapshot of the display
+   registers and affine references taken at that line's hblank (core 0), so
+   it can draw on core 1 while core 0 emulates the following lines. */
+#define RLINE_IO 0x30                 /* DISPCNT .. BLDY (u16 index 0x2A) */
+typedef struct { u16 io[RLINE_IO]; s32 ax[2], ay[2]; u8 oam, oamb, palb; } rline_t;
+/* OAM as the line saw it: core 0 copies OAM into the other of two buffers at
+   the first line after a change, so the game can rewrite OAM (in the vblank,
+   for the next frame) without waiting for core 1 to draw the last lines */
+#ifdef ESP_PLATFORM
+static u16 (*r_oam)[512];   /* PSRAM: gbsp_render_start() */
+#endif
+static const u16 *render_oam = oam_ram;
+static u8 r_oam_cur;
+static u32 r_oam_last[2] = {~0U, ~0U};   /* index of the last queued line using it */
+static bool r_oam_valid;
+/* the same for the converted palette, four buffers (games change it on
+   several lines of a frame): palette writes set gbsp_pal_dirty (gba_memory.c) */
+#define R_PAL_N 4
+#ifdef ESP_PLATFORM
+static u16 (*r_pal)[512];   /* PSRAM: gbsp_render_start() */
+#endif
+static u16 *const live_pal = palette_ram_converted;
+static const u16 *render_pal = palette_ram_converted;
+static u8 r_pal_cur;
+static u32 r_pal_last[R_PAL_N] = {~0U, ~0U, ~0U, ~0U};
+extern "C" { u8 gbsp_pal_dirty = 1; }
+#define palette_ram_converted render_pal
+#ifdef ESP_PLATFORM
+static rline_t *rlines;   /* 160 lines, PSRAM (internal RAM is full): gbsp_render_start() */
+#else
+static rline_t rlines_pc[160], *rlines = rlines_pc;
+static u16 r_oam_pc[2][512], (*r_oam)[512] = r_oam_pc;
+static u16 r_pal_pc[R_PAL_N][512], (*r_pal)[512] = r_pal_pc;
+#endif
+static const u16 *render_io = io_registers;
+static s32 r_affine_x[2], r_affine_y[2];
+#define live_ioreg(regnum) (eswap16(io_registers[(regnum)]))
+#define live_ioreg32(regnum) (live_ioreg(regnum) | (live_ioreg((regnum)+1) << 16))
+#undef read_ioreg
+#define read_ioreg(regnum) (eswap16(render_io[(regnum)]))
+#else
+#define live_ioreg(regnum) read_ioreg(regnum)
+#define live_ioreg32(regnum) read_ioreg32(regnum)
+#define r_affine_x affine_reference_x
+#define r_affine_y affine_reference_y
+#define render_oam oam_ram
+#endif
 #define get_screen_pitch()    GBA_SCREEN_PITCH
 
 typedef struct {
@@ -135,10 +198,10 @@ static inline s32 signext28(u32 value)
 void video_reload_counters()
 {
   /* This happens every Vblank */
-  affine_reference_x[0] = signext28(read_ioreg32(REG_BG2X_L));
-  affine_reference_y[0] = signext28(read_ioreg32(REG_BG2Y_L));
-  affine_reference_x[1] = signext28(read_ioreg32(REG_BG3X_L));
-  affine_reference_y[1] = signext28(read_ioreg32(REG_BG3Y_L));
+  affine_reference_x[0] = signext28(live_ioreg32(REG_BG2X_L));
+  affine_reference_y[0] = signext28(live_ioreg32(REG_BG2Y_L));
+  affine_reference_x[1] = signext28(live_ioreg32(REG_BG3X_L));
+  affine_reference_y[1] = signext28(live_ioreg32(REG_BG3Y_L));
 }
 
 // Renders non-affine tiled background layer.
@@ -286,7 +349,7 @@ static inline void render_tile_Nbpp(
 
 
 template<typename stype, rendtype rdtype, bool isbase, bool is8bpp>
-static void render_scanline_text_fast(u32 layer,
+static inline __attribute__((always_inline)) void render_scanline_text_fast(u32 layer,
  u32 start, u32 end, void *scanline, const u16 * paltbl)
 {
   u32 bg_control = read_ioreg(REG_BGxCNT(layer));
@@ -551,7 +614,7 @@ static void render_scanline_text_mosaic(u32 layer,
 }
 
 template<typename stype, rendtype rdtype, bool isbase>
-static void render_scanline_text(u32 layer,
+static inline __attribute__((always_inline)) void render_scanline_text_body(u32 layer,
  u32 start, u32 end, void *scanline, const u16 * paltbl)
 {
   // Tile mode has 4 and 8 bpp modes.
@@ -575,6 +638,29 @@ static void render_scanline_text(u32 layer,
       render_scanline_text_fast<stype, rdtype, isbase, false>(
         layer, start, end, scanline, paltbl);
   }
+}
+
+template<typename stype, rendtype rdtype, bool isbase>
+static void render_scanline_text(u32 layer,
+ u32 start, u32 end, void *scanline, const u16 * paltbl)
+{
+  render_scanline_text_body<stype, rdtype, isbase>(layer, start, end, scanline, paltbl);
+}
+
+/* the tile layers of the common case (16-bit, no blending) run on core 1
+   next to the Xtensa dynarec on core 0: in IRAM, out of the shared 32 KB
+   instruction cache */
+template<>
+XT_HOT void render_scanline_text<u16, FULLCOLOR, true>(u32 layer,
+ u32 start, u32 end, void *scanline, const u16 * paltbl)
+{
+  render_scanline_text_body<u16, FULLCOLOR, true>(layer, start, end, scanline, paltbl);
+}
+template<>
+XT_HOT void render_scanline_text<u16, FULLCOLOR, false>(u32 layer,
+ u32 start, u32 end, void *scanline, const u16 * paltbl)
+{
+  render_scanline_text_body<u16, FULLCOLOR, false>(layer, start, end, scanline, paltbl);
 }
 
 static inline u8 lookup_pix_8bpp(
@@ -648,8 +734,8 @@ static inline void render_affine_background(
   s32 dx = (s16)read_ioreg(REG_BGxPA(layer));
   s32 dy = (s16)read_ioreg(REG_BGxPC(layer));
 
-  s32 source_x = affine_reference_x[layer - 2] + (start * dx);
-  s32 source_y = affine_reference_y[layer - 2] + (start * dy);
+  s32 source_x = r_affine_x[layer - 2] + (start * dx);
+  s32 source_y = r_affine_y[layer - 2] + (start * dy);
 
   // Maps are squared, four sizes available (128x128 to 1024x1024)
   u32 width_height = 128 << map_size;
@@ -849,8 +935,8 @@ static inline void render_scanline_bitmap(
 ) {
   s32 dx = (s16)read_ioreg(REG_BG2PA);
   s32 dy = (s16)read_ioreg(REG_BG2PC);
-  s32 source_x = affine_reference_x[0] + (start * dx); // Always BG2
-  s32 source_y = affine_reference_y[0] + (start * dy);
+  s32 source_x = r_affine_x[0] + (start * dx); // Always BG2
+  s32 source_y = r_affine_y[0] + (start * dy);
 
   // Premature abort render optimization if bitmap out of Y coordinate.
   if ((rdmode != ROTATED) && ((u32)(source_y >> 8)) >= height)
@@ -957,7 +1043,12 @@ static const u8 obj_dim_table[3][4][2] = {
   { {8, 16}, {8, 32}, {16, 32}, {32, 64} }
 };
 
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+/* 100 KB: PSRAM, the dynarec needs the internal RAM (IWRAM, IRAM code) */
+static EXT_RAM_BSS_ATTR u8 obj_priority_list[5][160][128];
+#else
 static u8 obj_priority_list[5][160][128];
+#endif
 static u8 obj_priority_count[5][160];
 static u8 obj_alpha_count[160];
 
@@ -1351,7 +1442,7 @@ inline static void render_sprite(
 
   if (is_affine) {
     u32 pnum = (obji->attr1 >> 9) & 0x1f;
-    const t_affp *affp_base = (t_affp*)oam_ram;
+    const t_affp *affp_base = (t_affp*)render_oam;
     const t_affp *affp = &affp_base[pnum];
 
     if (affp->dy == 0)     // No rotation happening (just scale)
@@ -1430,7 +1521,7 @@ void render_scanline_objs(
   for (objn = objcnt-1; objn >= 0; objn--) {
     // Objects in the list are pre-filtered and sorted in the appropriate order
     u32 objoff = objlist[objn];
-    const t_oam *oamentry = &((t_oam*)oam_ram)[objoff];
+    const t_oam *oamentry = &((t_oam*)render_oam)[objoff];
 
     u16 obj_attr0 = eswap16(oamentry->attr0);
     u16 obj_attr1 = eswap16(oamentry->attr1);
@@ -1513,7 +1604,7 @@ static void order_obj(u32 video_mode)
 {
   u32 obj_num;
   u32 row;
-  t_oam *oam_base = (t_oam*)oam_ram;
+  t_oam *oam_base = (t_oam*)render_oam;
   u16 rend_cycles[160];
 
   bool hblank_free = read_ioreg(REG_DISPCNT) & 0x20;
@@ -2282,6 +2373,335 @@ static const u8 active_layers[] = {
   0,
 };
 
+#ifdef GBAPROF
+extern "C" { int64_t gbaprof_render_us, gbaprof_wait_us; u32 gbaprof_lag159, gbaprof_syncs, gbaprof_lag80, gbaprof_wakes; }
+/* wait by cause: 1/2 CPU VRAM BG/OBJ, 3/4 DMA VRAM BG/OBJ, 5 OAM, 6 palette, 7 frame end */
+extern "C" { u32 gbsp_sync_src; int64_t gbaprof_wait_by[8]; }   /* scanline rendering time, read by gbsp/main/main.c */
+#endif
+
+#ifdef RETRO_GO
+/* draws one line from its snapshot (core 1 on the board, inline on the PC) */
+static void render_line(u32 vcount, const rline_t *ls)
+{
+#ifdef GBAPROF
+  const int64_t gbaprof_t0 = rg_system_timer();
+#endif
+  render_io = ls->io;
+  render_oam = r_oam[ls->oamb];
+  render_pal = r_pal[ls->palb];
+  r_affine_x[0] = ls->ax[0]; r_affine_x[1] = ls->ax[1];
+  r_affine_y[0] = ls->ay[0]; r_affine_y[1] = ls->ay[1];
+  u16 dispcnt = read_ioreg(REG_DISPCNT);
+  u16 *screen_offset = get_screen_pixels() + (vcount * get_screen_pitch());
+  u32 video_mode = dispcnt & 0x07;
+
+  // If OAM has been modified since the last scanline has been updated then
+  // reorder and reprofile the OBJ lists.
+  if(ls->oam)
+    order_obj(video_mode);
+
+  order_layers((dispcnt >> 8) & active_layers[video_mode], vcount);
+
+  // If the screen is in in forced blank draw pure white.
+  if(dispcnt & 0x80)
+    memset(screen_offset, 0xff, 240*sizeof(u16));
+  else
+    render_scanline_window(screen_offset);
+#ifdef GBAPROF
+  gbaprof_render_us += rg_system_timer() - gbaprof_t0;
+#endif
+}
+
+/* Lines queued by core 0 (gbsp_rq) and drawn (gbsp_rd), both counting up;
+   rq_line[] holds each queued line's vcount. Core 0 calls gbsp_render_sync()
+   before any write to palette, VRAM or OAM while lines are outstanding
+   (gba_memory.c) and at the end of the frame, so every line is drawn with the
+   video memory it had when it was emulated, however late core 1 draws it:
+   games rewrite OAM/VRAM/palette in the vblank for the next frame (TMNT's
+   turtles came out half transparent when core 1 drew the last lines after). */
+extern "C" { volatile u32 gbsp_rq, gbsp_rd; }
+static u8 rq_line[256];
+
+static inline void render_next(void)
+{
+  u32 line = rq_line[gbsp_rd & 255];
+  render_line(line, &rlines[line]);
+  __sync_synchronize();
+  gbsp_rd++;
+}
+
+#ifdef ESP_PLATFORM
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_heap_caps.h>
+extern "C" { int gbsp_render_core1; }
+static TaskHandle_t rtask;
+
+static void render_task(void *arg)
+{
+  for (;;)
+  {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#ifdef GBAPROF
+    gbaprof_wakes++;
+#endif
+    while (gbsp_rd != gbsp_rq)
+    {
+      __sync_synchronize();
+      render_next();
+    }
+  }
+}
+
+/* retro-go's display task is 6 on core 1: below it the LCD DMA buffers are
+   refilled as soon as they free up (the bus stays busy); since the VRAM copy,
+   a late renderer rarely makes core 0 wait */
+#ifndef GBSP_RENDER_PRIO
+#define GBSP_RENDER_PRIO 5
+#endif
+/* core 0: start the line renderer on core 1 */
+extern "C" void gbsp_render_start(void)
+{
+  rlines = (rline_t *)heap_caps_malloc(160 * sizeof(rline_t), MALLOC_CAP_SPIRAM);
+  r_oam = (u16 (*)[512])heap_caps_malloc(2 * sizeof(oam_ram), MALLOC_CAP_SPIRAM);
+  r_pal = (u16 (*)[512])heap_caps_malloc(R_PAL_N * 512 * sizeof(u16), MALLOC_CAP_SPIRAM);
+  if (!rlines || !r_oam || !r_pal)
+    abort();
+  /* above retro-go's display task (6) on core 1, so core 0 rarely waits */
+  if (xTaskCreatePinnedToCore(render_task, "gba_render", 6144, NULL, GBSP_RENDER_PRIO, &rtask, 1) == pdPASS)
+    gbsp_render_core1 = 1;
+}
+
+#ifdef GBAPROF
+#include "esp_cpu.h"
+extern "C" { u32 gbaprof_notify_cycles, gbaprof_notifies; }
+#endif
+/* core 1 is woken every (GBSP_WAKE_MASK + 1) lines: the less it lags, the less
+   core 0 waits in gbsp_render_sync when the game writes VRAM mid-frame */
+#ifndef GBSP_WAKE_MASK
+#define GBSP_WAKE_MASK 7
+#endif
+/* core 0: wait until core 1 has drawn every queued line */
+extern "C" void gbsp_render_sync(void)
+{
+  if (gbsp_rd == gbsp_rq)
+    return;
+#ifdef GBAPROF
+  const int64_t t0 = rg_system_timer();
+#endif
+#ifdef GBAPROF
+  gbaprof_syncs++;
+#endif
+  xTaskNotifyGive(rtask);
+  while (gbsp_rd != gbsp_rq)
+    ;
+  __sync_synchronize();
+#ifdef GBAPROF
+  gbaprof_wait_us += rg_system_timer() - t0;
+  gbaprof_wait_by[gbsp_sync_src & 7] += rg_system_timer() - t0;
+  gbsp_sync_src = 0;
+#endif
+}
+
+static void line_ready(u32 vcount)
+{
+  if (!gbsp_render_core1)
+  {
+    render_line(vcount, &rlines[vcount]);
+    return;
+  }
+  rq_line[gbsp_rq & 255] = vcount;
+  __sync_synchronize();
+  gbsp_rq++;
+#ifdef GBAPROF
+  if (vcount == 159)
+    gbaprof_lag159 += gbsp_rq - gbsp_rd;
+  if (vcount == 80)
+    gbaprof_lag80 += gbsp_rq - gbsp_rd;
+#endif
+  if ((vcount & GBSP_WAKE_MASK) == GBSP_WAKE_MASK || vcount == 159)
+  {
+#ifdef GBAPROF
+    u32 c0 = esp_cpu_get_cycle_count();
+#endif
+    xTaskNotifyGive(rtask);
+#ifdef GBAPROF
+    gbaprof_notify_cycles += esp_cpu_get_cycle_count() - c0;
+    gbaprof_notifies++;
+#endif
+  }
+}
+#else
+extern "C" void gbsp_render_start(void) {}
+/* PC harness: RLAG=n draws each line n lines late (and the frame's last
+   ones only at the next sync), like core 1 on the board */
+static int rlag = -1;
+#include <stdio.h>
+static u32 syncstat[4][232];   /* SYNCSTAT: syncs with lines outstanding, by region and vcount */
+extern "C" u32 gbsp_sync_region;
+u32 gbsp_sync_region;
+static void syncstat_dump(void)
+{
+  static const char *n[4] = {"pal", "vram", "oam", "dma/end"};
+  for (int r = 0; r < 4; r++) {
+    u32 t = 0; for (int v = 0; v < 232; v++) t += syncstat[r][v];
+    printf("SYNC %s total %u:", n[r], t);
+    for (int v = 0; v < 232; v++) if (syncstat[r][v]) printf(" %d:%u", v, syncstat[r][v]);
+    printf("\n");
+  }
+}
+extern "C" void gbsp_render_sync(void)
+{
+  static int init;
+  if (!init) { init = 1; if (getenv("SYNCSTAT")) atexit(syncstat_dump); }
+  if (gbsp_rd != gbsp_rq) syncstat[gbsp_sync_region & 3][live_ioreg(REG_VCOUNT) % 232]++;
+  gbsp_sync_region = 3;
+  while (gbsp_rd != gbsp_rq)
+    render_next();
+}
+static void line_ready(u32 vcount)
+{
+  if (rlag < 0) rlag = getenv("RLAG") ? atoi(getenv("RLAG")) : 0;
+  rq_line[gbsp_rq & 255] = vcount;
+  gbsp_rq++;
+  while (gbsp_rq - gbsp_rd > (u32)rlag)
+    render_next();
+}
+#endif
+extern "C" void gbsp_render_wait(void)
+{
+#ifdef GBAPROF
+  gbsp_sync_src = 7;
+#endif
+  gbsp_render_sync();
+}
+
+#ifdef RETRO_GO
+extern "C" void gbsp_display_poll(void);
+#endif
+#ifdef GBSP_RVRAM
+extern "C" void gbsp_rvram_alloc(void)
+{
+  gbsp_rvram = (u8 *)heap_caps_malloc(1024 * 96, MALLOC_CAP_SPIRAM);
+  if (!gbsp_rvram)
+    abort();
+  gbsp_vram_mark_all();
+}
+extern "C" void gbsp_vram_mark_all(void)
+{
+  gbsp_vram_dirty[0] = gbsp_vram_dirty[1] = gbsp_vram_dirty[2] = 0xFFFFFFFF;
+  gbsp_vram_dirty_any = 1;
+}
+/* before a line is queued: the lines queued before the VRAM writes are drawn
+   with the old contents, then the written pages are copied */
+static void gbsp_vram_flush(void)
+{
+  if (gbsp_rq != gbsp_rd)
+  {
+#ifdef GBAPROF
+    gbsp_sync_src = 3;
+#endif
+    gbsp_render_sync();
+  }
+  for (int w = 0; w < 3; w++)
+  {
+    u32 bits = gbsp_vram_dirty[w];
+    gbsp_vram_dirty[w] = 0;
+    while (bits)
+    {
+      u32 p = w * 32 + __builtin_ctz(bits);
+      bits &= bits - 1;
+      memcpy(gbsp_rvram + p * 1024, live_vram + p * 1024, 1024);
+    }
+  }
+  gbsp_vram_dirty_any = 0;
+}
+#endif
+
+XT_HOT void update_scanline(void)
+{
+  u16 dispcnt = live_ioreg(REG_DISPCNT);
+  u32 vcount = live_ioreg(REG_VCOUNT);
+#ifdef GBSP_RVRAM
+  if (gbsp_vram_dirty_any && vcount < 160)
+    gbsp_vram_flush();
+#endif
+#ifdef RETRO_GO
+  if ((vcount & 31) == 31)
+    gbsp_display_poll();   /* a frame finished while the display was busy */
+#endif
+  u32 video_mode = dispcnt & 0x07;
+
+  if(skip_next_frame)
+    return;
+
+  rline_t *ls = &rlines[vcount];
+  memcpy(ls->io, io_registers, sizeof(ls->io));
+  ls->ax[0] = affine_reference_x[0]; ls->ax[1] = affine_reference_x[1];
+  ls->ay[0] = affine_reference_y[0]; ls->ay[1] = affine_reference_y[1];
+  ls->oam = reg[OAM_UPDATED] || !r_oam_valid;
+  if (ls->oam)
+  {
+    u32 nb = r_oam_cur ^ 1;
+    if ((s32)(r_oam_last[nb] - gbsp_rd) >= 0)   /* a queued line still reads it */
+    {
+#ifdef GBAPROF
+      gbsp_sync_src = 5;
+#endif
+      gbsp_render_sync();
+    }
+    memcpy(r_oam[nb], oam_ram, sizeof(oam_ram));
+    r_oam_cur = nb;
+    r_oam_valid = true;
+  }
+  ls->oamb = r_oam_cur;
+  if (gbsp_pal_dirty)
+  {
+    u32 nb = (r_pal_cur + 1) % R_PAL_N;
+    if ((s32)(r_pal_last[nb] - gbsp_rd) >= 0)
+    {
+#ifdef GBAPROF
+      gbsp_sync_src = 6;
+#endif
+      gbsp_render_sync();
+    }
+    memcpy(r_pal[nb], live_pal, 512 * sizeof(u16));
+    r_pal_cur = nb;
+    gbsp_pal_dirty = 0;
+  }
+  ls->palb = r_pal_cur;
+  r_pal_last[r_pal_cur] = gbsp_rq;
+  r_oam_last[r_oam_cur] = gbsp_rq;   /* this line's queue index */
+  reg[OAM_UPDATED] = 0;
+  line_ready(vcount);
+
+  // Mode 0 does not use any affine params at all.
+  if (video_mode) {
+    // Account for vertical mosaic effect, by correcting affine references.
+    const u32 bgmosv = ((live_ioreg(REG_MOSAIC) >> 4) & 0xF) + 1;
+
+    if (live_ioreg(REG_BG2CNT) & 0x40) {   // Mosaic enabled for this BG
+      if ((vcount % bgmosv) == bgmosv-1) { // Correct after the last line
+        affine_reference_x[0] += (s16)live_ioreg(REG_BG2PB) * bgmosv;
+        affine_reference_y[0] += (s16)live_ioreg(REG_BG2PD) * bgmosv;
+      }
+    } else {
+      affine_reference_x[0] += (s16)live_ioreg(REG_BG2PB);
+      affine_reference_y[0] += (s16)live_ioreg(REG_BG2PD);
+    }
+
+    if (live_ioreg(REG_BG3CNT) & 0x40) {
+      if ((vcount % bgmosv) == bgmosv-1) {
+        affine_reference_x[1] += (s16)live_ioreg(REG_BG3PB) * bgmosv;
+        affine_reference_y[1] += (s16)live_ioreg(REG_BG3PD) * bgmosv;
+      }
+    } else {
+      affine_reference_x[1] += (s16)live_ioreg(REG_BG3PB);
+      affine_reference_y[1] += (s16)live_ioreg(REG_BG3PD);
+    }
+  }
+}
+#else
 void update_scanline(void)
 {
   u32 pitch = get_screen_pitch();
@@ -2292,6 +2712,9 @@ void update_scanline(void)
 
   if(skip_next_frame)
     return;
+#ifdef GBAPROF
+  const int64_t gbaprof_t0 = rg_system_timer();
+#endif
 
   // If OAM has been modified since the last scanline has been updated then
   // reorder and reprofile the OBJ lists.
@@ -2334,6 +2757,10 @@ void update_scanline(void)
       affine_reference_y[1] += (s16)read_ioreg(REG_BG3PD);
     }
   }
+#ifdef GBAPROF
+  gbaprof_render_us += rg_system_timer() - gbaprof_t0;
+#endif
 }
+#endif
 
 

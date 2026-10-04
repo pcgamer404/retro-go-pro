@@ -8,6 +8,7 @@ extern const rg_audio_driver_t rg_audio_driver_dummy;
 extern const rg_audio_driver_t rg_audio_driver_buzzer;
 extern const rg_audio_driver_t rg_audio_driver_i2s;
 extern const rg_audio_driver_t rg_audio_driver_sdl2;
+extern const rg_audio_driver_t rg_audio_driver_usb;
 
 // static const rg_audio_driver_t *drivers[] = {
 //     NULL,
@@ -20,6 +21,9 @@ static const rg_audio_sink_t sinks[] = {
 #endif
 #if RG_AUDIO_USE_EXT_DAC
     {&rg_audio_driver_i2s,    1, "Ext DAC"},
+#endif
+#if RG_AUDIO_USE_USB
+    {&rg_audio_driver_usb,    0, "USB DAC"},
 #endif
 #if RG_AUDIO_USE_SDL2
     {&rg_audio_driver_sdl2,   0, "SDL2"   },

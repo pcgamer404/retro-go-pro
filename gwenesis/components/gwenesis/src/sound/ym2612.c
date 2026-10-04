@@ -1968,11 +1968,17 @@ void YM2612Init(void) {
 }
 
 /* reset OPN registers */
+#if GWENESIS_YM_WORKER
+static void ym_shadow_sync(void);
+#endif
 void YM2612ResetChip(void)
 {
     //printf("YM2612 reset chip\n");
 
   int i;
+#if GWENESIS_YM_WORKER
+  ym2612_worker_flush();
+#endif
 
   ym2612.OPN.eg_timer     = 0;
   ym2612.OPN.eg_cnt       = 0;
@@ -2148,6 +2154,22 @@ static inline void YM2612Update(int16_t *buffer, int length)
   INTERNAL_TIMER_B(length);
 }
 
+#if GEN_PROF
+#include <rg_system.h>
+int64_t gen_prof_ym_us = 0;   /* time inside YM2612Update, wherever it was called from */
+int gen_prof_ym_calls = 0, gen_prof_ym_samples = 0;
+#endif
+
+#if GWENESIS_YM_WORKER
+static int16_t *ym_out = gwenesis_ym2612_buffer; /* synth output base (worker double buffer) */
+#define YM_OUT ym_out
+#define ym2612_run ym2612_run_synth
+#define YM2612Write ym2612_write_direct
+#define YM2612Read ym2612_read_direct
+#else
+#define YM_OUT gwenesis_ym2612_buffer
+#endif
+
 void ym2612_run( int target) {
 
   if ( ym2612_clock >= target) {
@@ -2156,7 +2178,14 @@ void ym2612_run( int target) {
   int ym2612_prev_index = ym2612_index;
   ym2612_index += (target-ym2612_clock) / ym2612.divisor;
   if (ym2612_index > ym2612_prev_index) {
-    YM2612Update(gwenesis_ym2612_buffer + ym2612_prev_index, ym2612_index-ym2612_prev_index);
+#if GEN_PROF
+    int64_t _t0 = rg_system_timer();
+    gen_prof_ym_calls++; gen_prof_ym_samples += ym2612_index-ym2612_prev_index;
+#endif
+    YM2612Update(YM_OUT + ym2612_prev_index, ym2612_index-ym2612_prev_index);
+#if GEN_PROF
+    gen_prof_ym_us += rg_system_timer() - _t0;
+#endif
     ym2612_clock = ym2612_index*ym2612.divisor;
 
   } else {
@@ -2228,6 +2257,206 @@ unsigned int YM2612Read(int target)
   ym_log(__FUNCTION__, "%02x",ym2612.OPN.ST.status & 0xff);
   return ym2612.OPN.ST.status & 0xff;
 }
+
+#if GWENESIS_YM_WORKER
+#undef ym2612_run
+#undef YM2612Write
+#undef YM2612Read
+
+/* ------------------------------------------------------------------------
+ * Second-core FM synthesis (esp32-emu-turbo, 2026-09-14).
+ *
+ * YM2612Update costs ~6 ms per frame on the emulation core (37% of a
+ * Genesis frame). The emulator now only logs the register writes with their
+ * clock and keeps a shadow of the two timers for status reads; at the end
+ * of the frame the log is handed to a task on core 1 that replays it with
+ * exact sync (the accurate-mode timing, for free) into a double buffer.
+ * Audio lags the picture by one frame (16.7 ms).
+ * ---------------------------------------------------------------------- */
+#include <rg_system.h>
+#include <string.h>
+
+#define YM_LOG_SIZE 8192
+typedef struct { int16_t a; int16_t v; int32_t target; } ym_event_t;
+static ym_event_t ym_log[YM_LOG_SIZE];
+static int ym_log_head = 0;          /* producer, core 0 */
+static int ym_job_start = 0;         /* first event of the frame being logged */
+
+static struct
+{
+  int address, mode, TA, TB, TAL, TBL, TAC, TBC, status, clock, index;
+} tm;                                /* core-0 timer shadow, same semantics as ST.* */
+
+typedef struct { int start, end, end_target; int16_t *out; } ym_job_t;
+static ym_job_t ym_jobs[2];
+static int16_t ym_bufs[2][AUDIO_BUFFER_LENGTH_MAX];
+static int ym_cur = 0;               /* buffer/job the worker is (or will be) filling */
+static rg_task_t *ym_task = NULL;
+static volatile int ym_busy = 0;
+
+static void ym_timers_run(int target)
+{
+  if (tm.clock >= target)
+    return;
+  int prev = tm.index;
+  tm.index += (target - tm.clock) / ym2612.divisor;
+  int n = tm.index - prev;
+  if (n <= 0)
+  {
+    tm.index = prev;
+    return;
+  }
+  tm.clock = tm.index * ym2612.divisor;
+  if (tm.mode & 0x01)
+  {
+    while (n-- > 0)  /* INTERNAL_TIMER_A per sample */
+    {
+      if (--tm.TAC <= 0)
+      {
+        if (tm.mode & 0x04)
+          tm.status |= 0x01;
+        tm.TAC = tm.TAL;
+      }
+    }
+    n = tm.index - prev;
+  }
+  if (tm.mode & 0x02)  /* INTERNAL_TIMER_B per chunk */
+  {
+    tm.TBC -= n;
+    if (tm.TBC <= 0)
+    {
+      if (tm.mode & 0x08)
+        tm.status |= 0x02;
+      if (tm.TBL)
+        tm.TBC += tm.TBL;
+      else
+        tm.TBC = tm.TBL;
+    }
+  }
+}
+
+static void ym_worker(void *arg)
+{
+  rg_task_msg_t msg;
+  while (rg_task_receive(&msg))
+  {
+    if (msg.type == RG_TASK_MSG_STOP)
+      break;
+    ym_job_t *job = msg.dataPtr;
+    ym_out = job->out;
+    ym2612_clock = 0;
+    ym2612_index = 0;
+    for (int i = job->start; i != job->end; i = (i + 1) & (YM_LOG_SIZE - 1))
+    {
+      ym2612_run_synth(ym_log[i].target);
+      ym2612_write_direct(ym_log[i].a, ym_log[i].v, 0);
+    }
+    ym2612_run_synth(job->end_target);
+    ym_busy = 0;
+  }
+}
+
+static void ym_worker_wait(void)
+{
+  while (ym_busy)
+    rg_task_delay(1);
+}
+
+void ym2612_worker_flush(void)
+{
+  ym_worker_wait();
+}
+
+/* Shadow timers follow the chip state (after reset / load state). */
+static void ym_shadow_sync(void)
+{
+  tm.address = ym2612.OPN.ST.address;
+  tm.mode = ym2612.OPN.ST.mode;
+  tm.TA = ym2612.OPN.ST.TA;  tm.TB = ym2612.OPN.ST.TB;
+  tm.TAL = ym2612.OPN.ST.TAL; tm.TBL = ym2612.OPN.ST.TBL;
+  tm.TAC = ym2612.OPN.ST.TAC; tm.TBC = ym2612.OPN.ST.TBC;
+  tm.status = ym2612.OPN.ST.status;
+  tm.clock = tm.index = 0;
+}
+
+void ym2612_worker_start(void)
+{
+  if (!ym_task)
+  {
+    ym_task = rg_task_create("ym2612", &ym_worker, NULL, 4 * 1024, RG_TASK_PRIORITY_5, 1);
+    RG_LOGI("YM2612 synthesis on core 1");
+  }
+  ym_worker_wait();
+  ym_shadow_sync();
+  ym_log_head = ym_job_start = 0;
+}
+
+/* Core 0 API ------------------------------------------------------------ */
+
+void ym2612_run(int target)
+{
+  ym_timers_run(target);
+}
+
+unsigned int YM2612Read(int target)
+{
+  ym_timers_run(target);
+  return tm.status & 0xff;
+}
+
+void YM2612Write(unsigned int a, unsigned int v, int target)
+{
+  ym_timers_run(target);
+  v &= 0xff;
+  switch (a)
+  {
+    case 0: tm.address = v; break;
+    case 2: tm.address = v | 0x100; break;
+    default:
+      switch (tm.address)
+      {
+        case 0x24: tm.TA = (tm.TA & 0x03) | (((int)v) << 2); tm.TAL = 1024 - tm.TA; break;
+        case 0x25: tm.TA = (tm.TA & 0x3fc) | (v & 3);        tm.TAL = 1024 - tm.TA; break;
+        case 0x26: tm.TB = v; tm.TBL = (256 - v) << 4; break;
+        case 0x27:  /* set_timers(): reload, reset flags, mode */
+          if ((v & 1) && !(tm.mode & 1)) tm.TAC = tm.TAL;
+          if ((v & 2) && !(tm.mode & 2)) tm.TBC = tm.TBL;
+          tm.status &= (~v >> 4);
+          tm.mode = v;
+          break;
+      }
+  }
+  int next = (ym_log_head + 1) & (YM_LOG_SIZE - 1);
+  if (next == ym_job_start)   /* log full: drop (never seen; ~750 writes per frame) */
+    return;
+  ym_log[ym_log_head] = (ym_event_t){ a, v, target };
+  ym_log_head = next;
+}
+
+/* End of frame: hand the frame's writes to core 1, return the buffer the
+ * worker finished for the previous frame (waits if it is late). */
+int16_t *ym2612_frame_end(int end_target, int enabled)
+{
+  ym_worker_wait();
+  int16_t *done = ym_jobs[ym_cur ^ 1].out;   /* previous frame's output */
+  ym_job_t *job = &ym_jobs[ym_cur];
+  job->start = ym_job_start;
+  job->end = ym_log_head;
+  job->end_target = end_target;
+  job->out = ym_bufs[ym_cur];
+  ym_job_start = ym_log_head;
+  tm.clock = tm.index = 0;                   /* frame clocks restart at 0 */
+  if (enabled)
+  {
+    ym_busy = 1;
+    rg_task_send(ym_task, &(rg_task_msg_t){ .dataPtr = job });
+  }
+  else
+    memset(job->out, 0, sizeof(ym_bufs[0]));
+  ym_cur ^= 1;
+  return done ? done : ym_bufs[ym_cur ^ 1];
+}
+#endif /* GWENESIS_YM_WORKER */
 
 
 void YM2612Config(unsigned char dac_bits) //,unsigned int AUDIO_FREQ_DIVISOR)
@@ -2332,6 +2561,9 @@ int YM2612SaveContext(unsigned char *state)
 #endif
 
 void gwenesis_ym2612_save_state() {
+#if GWENESIS_YM_WORKER
+  ym2612_worker_flush();
+#endif
   SaveState* state;
   state = saveGwenesisStateOpenForWrite("ym2612");
   saveGwenesisStateSetBuffer(state, "ym2612", &ym2612, sizeof(ym2612));
@@ -2345,6 +2577,9 @@ void gwenesis_ym2612_save_state() {
 }
 
 void gwenesis_ym2612_load_state() {
+#if GWENESIS_YM_WORKER
+  ym2612_worker_flush();
+#endif
   SaveState* state = saveGwenesisStateOpenForRead("ym2612");
   saveGwenesisStateGetBuffer(state, "ym2612", &ym2612, sizeof(ym2612));
   m2 = saveGwenesisStateGet(state, "m2");
@@ -2354,4 +2589,7 @@ void gwenesis_ym2612_load_state() {
   saveGwenesisStateGetBuffer(state, "out_fm", out_fm, sizeof(out_fm));
   bitmask = saveGwenesisStateGet(state, "bitmask");
   saveGwenesisStateGetBuffer(state, "OPNREGS", OPNREGS, sizeof(OPNREGS));
+#if GWENESIS_YM_WORKER
+  ym_shadow_sync();
+#endif
 }

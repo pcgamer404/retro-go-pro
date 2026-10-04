@@ -12,7 +12,10 @@
 #endif
 
 /* Cache sizes and their config knobs */
-#if defined(SMALL_TRANSLATION_CACHE)
+#if defined(XT_IRAM_CACHE)   /* xtensa experiment: both caches in internal RAM */
+  #define ROM_TRANSLATION_CACHE_SIZE (1024 * 32)
+  #define RAM_TRANSLATION_CACHE_SIZE (1024 * 16)
+#elif defined(SMALL_TRANSLATION_CACHE)
   #define ROM_TRANSLATION_CACHE_SIZE (1024 * 1024 * 2)
   #define RAM_TRANSLATION_CACHE_SIZE (1024 * 384)
 #else
@@ -22,7 +25,10 @@
 
 /* Should be an upperbound to the maximum number of bytes a single JIT'ed
    instruction can take. STM/LDM are tipically the biggest ones */
-#define TRANSLATION_CACHE_LIMIT_THRESHOLD (1024 * 2)
+/* Xtensa: the check runs after every instruction, but the block still gets its tail (cold code,
+   exit stubs, translation gate) - upstream's 2 KB can be exceeded by the last LDM/STM plus a full
+   cold section, and the overrun lands in the RAM cache. 8 KB costs 6 KB of 2.4 MB of cache. */
+#define TRANSLATION_CACHE_LIMIT_THRESHOLD (1024 * 8)
 
 /* Hash table size for ROM trans cache lookups */
 #define ROM_BRANCH_HASH_BITS                           16

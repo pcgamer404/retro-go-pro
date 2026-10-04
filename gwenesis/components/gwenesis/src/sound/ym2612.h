@@ -36,6 +36,11 @@ extern int YM2612SaveContext(unsigned char *state);
 //extern void YM2612LoadRegs(uint8_t *regs);
 //extern void YM2612SaveRegs(uint8_t *regs);
 
+#define AUDIO_BUFFER_LENGTH_MAX 1024  /* 53267 Hz / 50 fps + margin */
+void ym2612_worker_start(void);
+void ym2612_worker_flush(void);
+int16_t *ym2612_frame_end(int end_target, int enabled);
+
 void gwenesis_ym2612_save_state();
 void gwenesis_ym2612_load_state();
 

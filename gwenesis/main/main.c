@@ -4,16 +4,23 @@
 
 #include <gwenesis.h>
 
-#define USE_CORE1_TASK
-
 #define AUDIO_SAMPLE_RATE (53267)
-#define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
 
-#if RG_SCREEN_PIXEL_FORMAT == 0
-#define FB_PIXEL_FORMAT RG_PIXEL_PAL565_BE
+// GEN_PROF=1 env var at build (gwenesis/CMakeLists.txt): per-second cost split
+// of the frame loop, one timer read per section per scanline.
+#if GEN_PROF
+static struct { int64_t frame, m68k, z80, ym, sn, vdp; } gen_prof;
+#define GEN_PROF_T0(v)      int64_t v = rg_system_timer()
+#define GEN_PROF_ACC(f, v)  do { int64_t _n = rg_system_timer(); gen_prof.f += _n - (v); (v) = _n; } while (0)
 #else
-#define FB_PIXEL_FORMAT RG_PIXEL_PAL565_LE
+#define GEN_PROF_T0(v)      ((void)0)
+#define GEN_PROF_ACC(f, v)  ((void)0)
 #endif
+#define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
+/* The YM2612 renders at AUDIO_SAMPLE_RATE / 2 (26633 Hz); the PDM sink wants
+ * 32 kHz like every other app (at other rates its DAC-mode clocks, derived
+ * from rate / 100, misbehave), so the frame is resampled before submitting. */
+#define OUTPUT_RATE 32000
 
 extern unsigned char* VRAM;
 extern int zclk;
@@ -37,12 +44,6 @@ static bool sn76489_enabled = true;
 static rg_surface_t *updates[2];
 static rg_surface_t *currentUpdate;
 static rg_app_t *app;
-
-#ifdef USE_CORE1_TASK
-static rg_task_t *core1_task_handle;
-static bool core1_task_rendering = false;
-static bool core1_task_sound = true;
-#endif
 
 static const char *SETTING_YFM_EMULATION = "yfm_enable";
 static const char *SETTING_Z80_EMULATION = "z80_enable";
@@ -128,7 +129,6 @@ static rg_gui_event_t yfm_update_cb(rg_gui_option_t *option, rg_gui_event_t even
     {
         yfm_enabled = !yfm_enabled;
         rg_settings_set_number(NS_APP, SETTING_YFM_EMULATION, yfm_enabled);
-        memset(gwenesis_ym2612_buffer, 0, sizeof(gwenesis_ym2612_buffer));
     }
     strcpy(option->value, yfm_enabled ? _("On") : _("Off"));
 
@@ -141,7 +141,6 @@ static rg_gui_event_t sn76489_update_cb(rg_gui_option_t *option, rg_gui_event_t 
     {
         sn76489_enabled = !sn76489_enabled;
         rg_settings_set_number(NS_APP, SETTING_SN76489_EMULATION, sn76489_enabled);
-        memset(gwenesis_sn76489_buffer, 0, sizeof(gwenesis_sn76489_buffer));
     }
     strcpy(option->value, sn76489_enabled ? _("On") : _("Off"));
 
@@ -179,6 +178,7 @@ static bool save_state_handler(const char *filename)
 
 static bool load_state_handler(const char *filename)
 {
+    ym2612_worker_flush();
     if ((savestate_fp = fopen(filename, "rb")))
     {
         savestate_errors = 0;
@@ -205,79 +205,60 @@ static void event_handler(int event, void *arg)
     }
 }
 
-static rg_gui_event_t core1_rendering_update_cb(rg_gui_option_t *option, rg_gui_event_t event)
-{
-    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
-        core1_task_rendering = !core1_task_rendering;
-    strcpy(option->value, core1_task_rendering ? _("On") : _("Off"));
-    return RG_DIALOG_VOID;
-}
-
-static rg_gui_event_t core1_sound_update_cb(rg_gui_option_t *option, rg_gui_event_t event)
-{
-    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
-        core1_task_sound = !core1_task_sound;
-    strcpy(option->value, core1_task_sound ? _("On") : _("Off"));
-    return RG_DIALOG_VOID;
-}
-
-static void core1_task(void *arg)
-{
-    rg_task_msg_t msg;
-    while (rg_task_receive(&msg, -1))
-    {
-        switch (msg.type)
-        {
-            case 1: // Rendering
-                gwenesis_vdp_render_line(msg.dataInt);
-                break;
-            case 2: // Sound
-                gwenesis_SN76489_run(msg.dataInt);
-                ym2612_run(msg.dataInt);
-                break;
-            case RG_TASK_MSG_STOP:
-                return;
-            default: // Sync/no-op
-                continue;
-        }
-    }
-}
-
 static void options_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("YM2612 audio "), "-", RG_DIALOG_FLAG_NORMAL, &yfm_update_cb};
     *dest++ = (rg_gui_option_t){0, _("SN76489 audio"), "-", RG_DIALOG_FLAG_NORMAL, &sn76489_update_cb};
     *dest++ = (rg_gui_option_t){0, _("Z80 emulation"), "-", RG_DIALOG_FLAG_NORMAL, &z80_update_cb};
-
-    *dest++ = (rg_gui_option_t){0, _("Render on core 1"), "-", RG_DIALOG_FLAG_NORMAL, &core1_rendering_update_cb};
-    *dest++ = (rg_gui_option_t){0, _("Sound on core 1"),  "-", RG_DIALOG_FLAG_NORMAL, &core1_sound_update_cb};
-
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
+}
+
+/* Linear resampling of one frame of YM2612 output (26633 Hz) to OUTPUT_RATE.
+ * The phase and the last input sample carry over, so frame edges are smooth. */
+static void submit_resampled(const rg_audio_frame_t *in, int count)
+{
+    static rg_audio_frame_t out[AUDIO_BUFFER_LENGTH];
+    static rg_audio_frame_t last;
+    static int32_t phase = -65536; /* 16.16, position in "in"; -1 = last */
+    const int32_t step = (int32_t)(((int64_t)(AUDIO_SAMPLE_RATE / 2) << 16) / OUTPUT_RATE);
+    int n = 0;
+
+    while ((phase >> 16) + 1 <= count - 1 && n < (int)RG_COUNT(out))
+    {
+        int i = phase >> 16;
+        int32_t frac = phase & 0xFFFF;
+        const rg_audio_frame_t *a = i < 0 ? &last : &in[i];
+        const rg_audio_frame_t *b = &in[i + 1];
+        /* 15-bit fraction: a 16-bit difference times it stays within int32 */
+        out[n].left = a->left + (((b->left - a->left) * (frac >> 1)) >> 15);
+        out[n].right = a->right + (((b->right - a->right) * (frac >> 1)) >> 15);
+        n++;
+        phase += step;
+    }
+    phase -= count << 16;
+    last = in[count - 1];
+    rg_audio_submit(out, n);
 }
 
 void app_main(void)
 {
-    const rg_config_t config = {
-        .sampleRate = AUDIO_SAMPLE_RATE / 2,
-        .frameRate = 60,
-        .storageRequired = true,
-        .romRequired = true,
-        .handlers.loadState = &load_state_handler,
-        .handlers.saveState = &save_state_handler,
-        .handlers.reset = &reset_handler,
-        .handlers.screenshot = &screenshot_handler,
-        .handlers.event = &event_handler,
-        .handlers.options = &options_handler,
+    const rg_handlers_t handlers = {
+        .loadState = &load_state_handler,
+        .saveState = &save_state_handler,
+        .reset = &reset_handler,
+        .screenshot = &screenshot_handler,
+        .event = &event_handler,
+        .options = &options_handler,
     };
-    app = rg_system_init(&config);
-    app->frameskip = 2;
+
+    app = rg_system_init(OUTPUT_RATE, &handlers, NULL);
 
     yfm_enabled = rg_settings_get_number(NS_APP, SETTING_YFM_EMULATION, 1);
-    sn76489_enabled = rg_settings_get_number(NS_APP, SETTING_SN76489_EMULATION, 1);
+    sn76489_enabled = rg_settings_get_number(NS_APP, SETTING_SN76489_EMULATION, 0);
     z80_enabled = rg_settings_get_number(NS_APP, SETTING_Z80_EMULATION, 1);
 
-    updates[0] = rg_surface_create(320, 241, FB_PIXEL_FORMAT , MEM_FAST);
-    // updates[1] = rg_surface_create(320, 241, FB_PIXEL_FORMAT , MEM_FAST);
+    updates[0] = rg_surface_create(320, 241, RG_PIXEL_PAL565_BE, MEM_FAST);
+    // updates[1] = rg_surface_create(320, 241, RG_PIXEL_PAL565_BE, MEM_FAST);
     currentUpdate = updates[0];
 
     // This is a hack because our new surface format doesn't yet support overdraw space easily
@@ -287,11 +268,6 @@ void app_main(void)
     // updates[1]->height = 240;
 
     VRAM = rg_alloc(VRAM_MAX_SIZE, MEM_FAST);
-
-#ifdef USE_CORE1_TASK
-    core1_task_handle = rg_task_create("core1_task", &core1_task, NULL, 4096, 1, RG_TASK_PRIORITY_6, 1);
-    RG_ASSERT(core1_task_handle, "Failed to create core1 task!");
-#endif
 
     RG_LOGI("Genesis start\n");
 
@@ -317,11 +293,15 @@ void app_main(void)
 
     RG_LOGI("reset_emulation()\n");
     reset_emulation();
+    ym2612_worker_start(); /* FM synthesis on core 1 (components/gwenesis/src/sound/ym2612.c) */
 
     if (app->bootFlags & RG_BOOT_RESUME)
     {
         rg_emu_load_state(app->saveSlot);
     }
+
+    rg_system_set_tick_rate(60);
+    app->frameskip = 3;
 
     extern unsigned char gwenesis_vdp_regs[0x20];
     extern unsigned int gwenesis_vdp_status;
@@ -329,22 +309,16 @@ void app_main(void)
     extern unsigned int screen_width, screen_height;
     extern int hint_pending;
 
-#if defined(RG_TARGET_GB300_P4)
-    uint32_t keymap[8] = {RG_KEY_UP, RG_KEY_DOWN, RG_KEY_LEFT, RG_KEY_RIGHT, RG_KEY_B, RG_KEY_A, RG_KEY_Y, RG_KEY_START};
-#else
     uint32_t keymap[8] = {RG_KEY_UP, RG_KEY_DOWN, RG_KEY_LEFT, RG_KEY_RIGHT, RG_KEY_A, RG_KEY_B, RG_KEY_SELECT, RG_KEY_START};
-#endif
-    uint32_t joystick_old = -1;
+    uint32_t joystick = 0, joystick_old;
 
     int skipFrames = 0;
 
-    RG_LOGI("emulation loop");
+    RG_LOGI("emulation loop\n");
     while (true)
     {
-        const int64_t startTime = rg_system_timer();
-        uint32_t joystick = rg_input_read_gamepad();
-        bool drawFrame = skipFrames == 0;
-        bool slowFrame = false;
+        joystick_old = joystick;
+        joystick = rg_input_read_gamepad();
 
         if (joystick & (RG_KEY_MENU | RG_KEY_OPTION))
         {
@@ -352,10 +326,8 @@ void app_main(void)
                 rg_gui_game_menu();
             else
                 rg_gui_options_menu();
-            continue;
         }
-
-        if (joystick != joystick_old)
+        else if (joystick != joystick_old)
         {
             for (int i = 0; i < 8; i++)
             {
@@ -364,8 +336,11 @@ void app_main(void)
                 else
                     gwenesis_io_pad_release_button(0, i);
             }
-            joystick_old = joystick;
         }
+
+        int64_t startTime = rg_system_timer();
+        bool drawFrame = skipFrames == 0;
+        bool slowFrame = false;
 
         int lines_per_frame = REG1_PAL ? LINES_PER_FRAME_PAL : LINES_PER_FRAME_NTSC;
         int hint_counter = gwenesis_vdp_regs[10];
@@ -380,8 +355,7 @@ void app_main(void)
         system_clock = 0;
         zclk = z80_enabled ? 0 : 0x1000000;
 
-        ym2612_clock = yfm_enabled ? 0 : 0x1000000;
-        ym2612_index = 0;
+        /* ym2612_clock / ym2612_index belong to the core-1 worker now */
 
         sn76489_clock = sn76489_enabled ? 0 : 0x1000000;
         sn76489_index = 0;
@@ -390,8 +364,11 @@ void app_main(void)
 
         while (scan_line < lines_per_frame)
         {
+            GEN_PROF_T0(t0);
             m68k_run(system_clock + VDP_CYCLES_PER_LINE);
+            GEN_PROF_ACC(m68k, t0);
             z80_run(system_clock + VDP_CYCLES_PER_LINE);
+            GEN_PROF_ACC(z80, t0);
 
             /* Audio */
             /*  GWENESIS_AUDIO_ACCURATE:
@@ -399,26 +376,16 @@ void app_main(void)
             *    =0 : line  accurate mode. audio is refreshed every lines.
             */
             if (GWENESIS_AUDIO_ACCURATE == 0) {
-                if (core1_task_sound)
-                {
-                    rg_task_msg_t msg = {.type = 2, .dataInt = system_clock + VDP_CYCLES_PER_LINE};
-                    rg_task_send(core1_task_handle, &msg, -1);
-                }
-                else
-                {
-                    gwenesis_SN76489_run(system_clock + VDP_CYCLES_PER_LINE);
-                    ym2612_run(system_clock + VDP_CYCLES_PER_LINE);
-                }
+                gwenesis_SN76489_run(system_clock + VDP_CYCLES_PER_LINE);
+                GEN_PROF_ACC(sn, t0);
+                ym2612_run(system_clock + VDP_CYCLES_PER_LINE);
+                GEN_PROF_ACC(ym, t0);
             }
 
             /* Video */
             if (drawFrame && scan_line < screen_height)
-            {
-                if (core1_task_rendering)
-                    rg_task_send(core1_task_handle, &(rg_task_msg_t){.type = 1, .dataInt = scan_line}, -1);
-                else
-                    gwenesis_vdp_render_line(scan_line); /* render scan_line */
-            }
+                gwenesis_vdp_render_line(scan_line); /* render scan_line */
+            GEN_PROF_ACC(vdp, t0);
 
             // On these lines, the line counter interrupt is reloaded
             if ((scan_line == 0) || (scan_line > screen_height)) {
@@ -456,21 +423,14 @@ void app_main(void)
             system_clock += VDP_CYCLES_PER_LINE;
         }
 
-        // Make sure all our previous messages have been processed before we continue
-        if (core1_task_rendering || core1_task_sound)
-        {
-            const rg_task_msg_t msg = {0};
-            rg_task_send(core1_task_handle, &msg, -1);
-            rg_task_send(core1_task_handle, &msg, -1);
-        }
-
         /* Audio
         * synchronize YM2612 and SN76489 to system_clock
         * it completes the missing audio sample for accurate audio mode
         */
+        int16_t *ym_frame = NULL;
         if (GWENESIS_AUDIO_ACCURATE == 1) {
             gwenesis_SN76489_run(system_clock);
-            ym2612_run(system_clock);
+            ym_frame = ym2612_frame_end(system_clock, yfm_enabled); /* previous frame's audio */
         }
 
         // reset m68k cycles to the begin of next frame cycle
@@ -478,35 +438,46 @@ void app_main(void)
 
         if (drawFrame)
         {
-            if (FB_PIXEL_FORMAT  == RG_PIXEL_PAL565_BE)
-            {
-                for (int i = 0; i < 256; ++i)
-                    currentUpdate->palette[i] = (CRAM565[i] << 8) | (CRAM565[i] >> 8);
-            }
-            else
-            {
-                memcpy(currentUpdate->palette, CRAM565, 512);
-            }
+            for (int i = 0; i < 256; ++i)
+                currentUpdate->palette[i] = (CRAM565[i] << 8) | (CRAM565[i] >> 8);
+            slowFrame = !rg_display_sync(false);
             currentUpdate->width = screen_width;
             currentUpdate->height = screen_height;
-            slowFrame = rg_display_is_busy(); // Previous frame is still not done, hence slowFrame...
             rg_display_submit(currentUpdate, 0);
         }
 
         rg_system_tick(rg_system_timer() - startTime);
-
-        // Mix in gwenesis_sn76489_buffer
-        if (sn76489_enabled)
+#if GEN_PROF
         {
-            for (int i = 0; i < AUDIO_BUFFER_LENGTH; i++)
+            static int64_t last_print = 0;
+            static int frames = 0, drawn = 0;
+            frames++; drawn += drawFrame;
+            gen_prof.frame += rg_system_timer() - startTime;
+            if (rg_system_timer() - last_print >= 1000000)
             {
-                int32_t sample = gwenesis_ym2612_buffer[i] + gwenesis_sn76489_buffer[i];
-                if (sample > 32767) sample = 32767;
-                else if (sample < -32768) sample = -32768;
-                gwenesis_ym2612_buffer[i] = (int16_t)sample;
+                int n = frames ? frames : 1;
+                extern int64_t gen_prof_ym_us; extern int gen_prof_ym_calls, gen_prof_ym_samples;
+                RG_LOGI("GENPROF n=%d drawn=%d | us/frame: frame=%d m68k=%d z80=%d ym2612=%d sn76489=%d vdp=%d (vdp per drawn=%d) | YM2612Update inside CPUs: %d us, %d calls, %d samples per frame\n",
+                        frames, drawn, (int)(gen_prof.frame / n), (int)(gen_prof.m68k / n), (int)(gen_prof.z80 / n),
+                        (int)(gen_prof.ym / n), (int)(gen_prof.sn / n), (int)(gen_prof.vdp / n),
+                        drawn ? (int)(gen_prof.vdp / drawn) : 0,
+                        (int)(gen_prof_ym_us / n), gen_prof_ym_calls / n, gen_prof_ym_samples / n);
+                char hud[96];
+                snprintf(hud, sizeof(hud), "68K%5.1f\nZ80%5.1f\nVDP%5.1f\nYM %5.1f", gen_prof.m68k / 1000.0f / n,
+                         gen_prof.z80 / 1000.0f / n, drawn ? gen_prof.vdp / 1000.0f / drawn : 0.0f, gen_prof_ym_us / 1000.0f / n);
+                rg_system_set_hud_text(hud);
+                gen_prof_ym_us = 0; gen_prof_ym_calls = gen_prof_ym_samples = 0;
+                memset(&gen_prof, 0, sizeof(gen_prof));
+                frames = drawn = 0;
+                last_print = rg_system_timer();
             }
         }
-        rg_audio_submit((void *)gwenesis_ym2612_buffer, AUDIO_BUFFER_LENGTH >> 1);
+#endif
+
+        if (yfm_enabled || z80_enabled) {
+            // TODO: Mix in gwenesis_sn76489_buffer
+            submit_resampled((const rg_audio_frame_t *)(ym_frame ? ym_frame : gwenesis_ym2612_buffer), AUDIO_BUFFER_LENGTH >> 1);
+        }
 
         if (skipFrames == 0)
         {

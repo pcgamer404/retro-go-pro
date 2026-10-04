@@ -19,6 +19,9 @@
 
 #include "common.h"
 #include <ctype.h>
+#ifdef RETRO_GO
+void gbsp_render_sync(void);   /* video.cpp: lines drawn on core 1 */
+#endif
 
 timer_type timer[4];
 
@@ -48,7 +51,7 @@ void rand_seed(u32 data) {
 }
 
 
-static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
+XT_HOT static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
 {
    unsigned i, ret = 0;
    for (i = 0; i < 4; i++)
@@ -117,7 +120,7 @@ void init_main(void)
 #endif
 }
 
-u32 function_cc update_gba(int remaining_cycles)
+XT_HOT u32 function_cc update_gba(int remaining_cycles)
 {
   u32 changed_pc = 0;
   u32 frame_complete = 0;
@@ -232,6 +235,9 @@ u32 function_cc update_gba(int remaining_cycles)
           // Force audio generation. Need to flush samples for this frame.
           render_gbc_sound();
 
+#ifdef RETRO_GO
+          gbsp_render_sync();   /* every line of the frame drawn (video.cpp) */
+#endif
           // We completed a frame, tell the dynarec to exit to the main thread
           frame_complete = 0x80000000;
           frame_counter++;
@@ -301,6 +307,10 @@ u32 function_cc update_gba(int remaining_cycles)
 
 void reset_gba(void)
 {
+#if defined(XTENSA_ARCH) && defined(RETRO_GO) && defined(ESP_PLATFORM)
+  extern void gbsp_vram_mark_all(void);   /* video.cpp: the renderer's VRAM copy */
+  gbsp_vram_mark_all();
+#endif
   init_memory();
   init_main();
   init_cpu();

@@ -1,0 +1,6 @@
+# MAME keeps ~550 KB of static tables (rgb6_to_pen alone is 256 KB): put the
+# whole component's .bss in PSRAM (needs CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY).
+[mapping:mame2000]
+archive: libmame2000.a
+entries:
+    * (extram_bss)

@@ -705,6 +705,7 @@ void applications_init(void) {
   application("MSX", "msx", "rom mx1 mx2 dsk", "fmsx", 0);
   application("NEC PC Engine", "pce", "pce zip", "retro-core", 0);
   application("DOOM", "doom", "wad zip", "prboom-go", 0);
+  application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
   application("Wolfenstein 3D", "wolf3d", "w3d wl6 wl1 sod zip", "wolf4sdl", 0);
   application("Duke Nukem 3D", "duke3d", "grp zip", "duke3d-go", 0);
   application("Quake", "quake", "quake pak", "quake-go", 0);
@@ -716,7 +717,7 @@ void applications_init(void) {
   application("Super Mario 64", "sm64", "z64 zip", "sm64-go", 0);
   application("Commodore 64", "c64", "crt zip prg d64 t64", "frodo", 0);
   application("Store", "store", "none", "store", 0);
-  application("Open Tyrian", "opentyrian", "cdt", "opentyrian", 0);
+  application("Open Tyrian", "opentyrian", "tyr cdt", "opentyrian", 0);
   application("Oregon Trail", "oregontrail", "trail", "oregontrail", 0);
   // application("Commander Keen", "clonekeen", "keen ck1 ck2", "clonekeen", 0);
 

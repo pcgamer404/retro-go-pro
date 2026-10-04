@@ -386,6 +386,7 @@ FILE *gamepak_file_large = NULL;
 u32 gbc_sound_wave_update = 0;
 
 u32 backup_type = BACKUP_UNKN;
+u8 gamepak_backup_dirty;   /* set on every backup write: the app saves the .sram file */
 u32 backup_type_reset = BACKUP_UNKN;
 u32 flash_mode = FLASH_BASE_MODE;
 u32 flash_command_position = 0;
@@ -493,6 +494,7 @@ u32 eeprom_counter = 0;
 
 void function_cc write_eeprom(u32 unused_address, u32 value)
 {
+  gamepak_backup_dirty = 1;
   switch(eeprom_mode)
   {
     case EEPROM_BASE_MODE:
@@ -1010,8 +1012,16 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
   return allow | alhigh;
 }
 
+#ifdef RETRO_GO
+extern u8 gbsp_pal_dirty;   /* video.cpp: the renderer copies the palette */
+#define gbsp_pal_mark() gbsp_pal_dirty = 1
+#else
+#define gbsp_pal_mark()
+#endif
+
 #define write_palette8(address, value)                                        \
 {                                                                             \
+  gbsp_pal_mark();                                                            \
   u32 aladdr = address & ~1U;                                                 \
   u16 val16 = (value << 8) | value;                                           \
   address16(palette_ram, aladdr) = eswap16(val16);                            \
@@ -1020,6 +1030,7 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
 
 #define write_palette16(address, value)                                       \
 {                                                                             \
+  gbsp_pal_mark();                                                            \
   u32 palette_address = address;                                              \
   address16(palette_ram, palette_address) = eswap16(value);                   \
   value = convert_palette(value);                                             \
@@ -1028,6 +1039,7 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
 
 #define write_palette32(address, value)                                       \
 {                                                                             \
+  gbsp_pal_mark();                                                            \
   u32 palette_address = address;                                              \
   u32 value_high = value >> 16;                                               \
   u32 value_low = value & 0xFFFF;                                             \
@@ -1041,6 +1053,7 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
 
 void function_cc write_backup(u32 address, u32 value)
 {
+  gamepak_backup_dirty = 1;
   value &= 0xFF;
 
   if(backup_type == BACKUP_EEPROM)
@@ -1408,6 +1421,65 @@ void function_cc write_gpio(u32 address, u32 value) {
 #define write_gpio16()                                                        \
   write_gpio(address & 0xFF, value)                                           \
 
+#ifdef RETRO_GO
+/* video.cpp: core 1 draws lines late; before VRAM changes, the lines already
+   emulated are drawn with the old contents (OAM, palette: per-line copies) */
+extern volatile u32 gbsp_rq, gbsp_rd;
+extern u8 gbsp_pal_dirty;
+void gbsp_render_sync(void);
+#ifdef GBAPROF
+/* why core 0 waited (video.cpp, GBAWAIT line): 1/2 CPU VRAM BG/OBJ, 3/4 DMA VRAM BG/OBJ */
+extern u32 gbsp_sync_src;
+#define GBSP_SYNC_SRC(v) (gbsp_sync_src = (v))
+#else
+#define GBSP_SYNC_SRC(v) ((void)0)
+#endif
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+/* video.cpp (GBSP_RVRAM): the renderer has its own VRAM copy; writes mark
+   the 1 KB pages (offset already folded to 0..0x17FFF) */
+extern u32 gbsp_vram_dirty[3];
+extern u8 gbsp_vram_dirty_any;
+#define gbsp_vram_mark(off)                                                  \
+  (gbsp_vram_dirty[(off) >> 15] |= 1u << (((off) >> 10) & 31), gbsp_vram_dirty_any = 1)
+static void gbsp_vram_mark_range(u32 a, u32 b)   /* GBA addresses, a <= b */
+{
+  if (b - a >= 0x18000)
+  {
+    gbsp_vram_dirty[0] = gbsp_vram_dirty[1] = gbsp_vram_dirty[2] = 0xFFFFFFFF;
+    gbsp_vram_dirty_any = 1;
+    return;
+  }
+  for (u32 o = a & ~0x3FFu; o <= b; o += 0x400)
+  {
+    u32 f = o & 0x1FFFF;
+    if (f >= 0x18000)
+      f -= 0x8000;
+    gbsp_vram_mark(f);
+  }
+}
+#define VRAM_WRITE_BEFORE()
+#define VRAM_WRITE_AFTER(off) gbsp_vram_mark(off)
+#else
+#define VRAM_WRITE_BEFORE() video_write_sync(1)
+#define VRAM_WRITE_AFTER(off)
+#endif
+#ifdef ESP_PLATFORM
+#define video_write_sync(r) do { if (gbsp_rq != gbsp_rd) gbsp_render_sync(); } while (0)
+#else
+extern u32 gbsp_sync_region;
+#define video_write_sync(r) do { if (gbsp_rq != gbsp_rd) { gbsp_sync_region = r; gbsp_render_sync(); } } while (0)
+#endif
+#else
+#define video_write_sync(r)
+#endif
+#ifndef GBSP_SYNC_SRC
+#define GBSP_SYNC_SRC(v) ((void)0)
+#endif
+#ifndef VRAM_WRITE_BEFORE
+#define VRAM_WRITE_BEFORE() video_write_sync(1)
+#define VRAM_WRITE_AFTER(off)
+#endif
+
 #define write_gpio32()                                                        \
 
 #define write_memory(type)                                                    \
@@ -1434,9 +1506,12 @@ void function_cc write_gpio(u32 address, u32 value) {
                                                                               \
     case 0x06:                                                                \
       /* VRAM */                                                              \
+      GBSP_SYNC_SRC((address & 0x10000) ? 2 : 1);                             \
+      VRAM_WRITE_BEFORE();                                                    \
       address &= 0x1FFFF;                                                     \
       if(address >= 0x18000)                                                  \
         address -= 0x8000;                                                    \
+      VRAM_WRITE_AFTER(address);                                              \
                                                                               \
       write_vram##type();                                                     \
       break;                                                                  \
@@ -2075,6 +2150,19 @@ cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
   dma_region_type dst_reg0 = dma_region_map[dst_ptr >> 24];
   dma_region_type dst_reg1 = dma_region_map[dst_end >> 24];
 
+#ifdef RETRO_GO
+  /* only VRAM: the renderer reads per-line copies of OAM and palette */
+  if (dst_reg0 == DMA_REGION_VRAM || dst_reg1 == DMA_REGION_VRAM)
+  {
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+    gbsp_vram_mark_range(MIN(dst_ptr, dst_end), MAX(dst_ptr, dst_end));
+#else
+    GBSP_SYNC_SRC((dst_ptr & 0x10000) ? 4 : 3);
+    video_write_sync(1);
+#endif
+  }
+#endif
+
   if (src_reg0 == src_reg1 && dst_reg0 == dst_reg1)
     ret = dma_transfer_copy(dmach, src_ptr, dst_ptr, byte_length >> tfsizes);
   else if (src_reg0 == src_reg1) {
@@ -2191,6 +2279,9 @@ u8 *load_gamepak_page(u32 physical_index)
   if(physical_index >= (gamepak_size >> 15))
     return &gamepak_buffers[0][0];
 
+#ifdef GBAPROF
+  { extern u32 gbaprof_pageloads; gbaprof_pageloads++; }
+#endif
   u32 entry = evict_gamepak_page();
   u32 block_idx = entry / 32;
   u32 block_off = entry % 32;
@@ -2211,6 +2302,45 @@ u8 *load_gamepak_page(u32 physical_index)
 
   return swap_location;
 }
+
+#ifdef RETRO_GO
+/* Save states need a 416 KB buffer and the ROM cache leaves less PSRAM than
+   that (an 8 MB ROM): lend the last 1 MB block of the ROM cache instead. Its
+   ROM pages are unmapped while it is lent, and read back from the card and
+   mapped again when it is returned. Only between frames (execute_arm not
+   running). */
+u8 *gamepak_borrow_block(void)
+{
+  u32 idx, j;
+  if (!gamepak_buffer_count || !gamepak_file_large)
+    return NULL;
+  idx = gamepak_buffer_count - 1;
+  for (j = 0; j < 32; j++)
+  {
+    s32 phy = gamepak_blk_queue[idx * 32 + j].phy_rom;
+    if (phy >= 0)
+      map_rom_entry(read, phy, NULL, gamepak_size >> 15);
+  }
+  return gamepak_buffers[idx];
+}
+
+void gamepak_return_block(void)
+{
+  u32 idx = gamepak_buffer_count - 1, j;
+  for (j = 0; j < 32; j++)
+  {
+    s32 phy = gamepak_blk_queue[idx * 32 + j].phy_rom;
+    u8 *slot = &gamepak_buffers[idx][32 * 1024 * j];
+    if (phy < 0)
+      continue;
+    fseek(gamepak_file_large, phy * (32 * 1024), SEEK_SET);
+    fread(slot, 32 * 1024, 1, gamepak_file_large);
+    map_rom_entry(read, phy, slot, gamepak_size >> 15);
+    if (phy == 0)
+      update_gpio_romregs();
+  }
+}
+#endif
 
 void init_gamepak_buffer(void)
 {

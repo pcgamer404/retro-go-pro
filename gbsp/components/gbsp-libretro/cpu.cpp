@@ -789,6 +789,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
   reg[rd] = psr_reg                                                           \
 
 #define arm_psr_store_cpsr(source)                                            \
+  collapse_flags();                                                           \
   const u32 store_mask = cpsr_masks[psr_pfield][PRIVMODE(reg[CPU_MODE])];     \
   reg[REG_CPSR] = (source & store_mask) | (reg[REG_CPSR] & (~store_mask));    \
   extract_flags();                                                            \
@@ -862,6 +863,23 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
   }                                                                           \
 }                                                                             \
 
+/* Work RAM stores (the stack, most game data) straight into the arrays, as
+   write_memory##size does for regions 2 and 3; everything else (I/O,
+   palette, VRAM, OAM, save chips) through the handlers. Without the dynarec
+   there is no self-modifying-code tracking to update. */
+#if SMC_DETECTION
+#define fast_write_ram(size, _address, value)                                 \
+  cpu_alert |= write_memory##size(_address, value);
+#else
+#define fast_write_ram(size, _address, value)                                 \
+  if ((_address >> 24) == 0x02)                                               \
+    address##size(ewram, (_address & 0x3FFFF)) = eswap##size(value);          \
+  else if ((_address >> 24) == 0x03)                                          \
+    address##size(iwram, (_address & 0x7FFF)) = eswap##size(value);           \
+  else                                                                        \
+    cpu_alert |= write_memory##size(_address, value);
+#endif
+
 #define fast_write_memory(size, type, address, value)                         \
 {                                                                             \
   u32 _address = (address) & ~(aligned_address_mask##size & 0x03);            \
@@ -872,7 +890,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
     STATS_MEMORY_ACCESS(write, type, region);                                 \
   }                                                                           \
                                                                               \
-  cpu_alert |= write_memory##size(_address, value);                           \
+  fast_write_ram(size, _address, value)                                       \
 }                                                                             \
 
 #define load_aligned32(address, dest)                                         \
@@ -906,7 +924,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
     cycles_remaining -= ws_cyc_seq[region][1];                                \
     STATS_MEMORY_ACCESS(write, u32, region);                                  \
   }                                                                           \
-  cpu_alert |= write_memory32(_address, value);                               \
+  fast_write_ram(32, _address, value)                                         \
 }                                                                             \
 
 #define load_memory_u8(address, dest)                                         \
@@ -1404,7 +1422,7 @@ cpu_alert_type check_interrupt() {
 
 // Checks for pending IRQs and raises them. This changes the CPU mode
 // which means that it must be called with a valid CPU state.
-u32 check_and_raise_interrupts()
+XT_HOT u32 check_and_raise_interrupts()
 {
   // Check any IRQ flag pending, IME and CPSR-IRQ enabled
   if (cpu_has_interrupt())
@@ -1455,14 +1473,82 @@ u16 palette_ram[512];
 u16 palette_ram_converted[512];
 #ifndef RETRO_GO
 u8 ewram[(1024 * 256) << SMC_DETECTION];
-u8 iwram[(1024 * 32) << SMC_DETECTION];
 u8 vram[1024 * 96];
 #endif
+u8 iwram[(1024 * 32) << SMC_DETECTION];
 u8 *memory_map_read[8 * 1024];
 u16 io_registers[512];
 #endif
 
+#ifdef GBAPROF
+extern "C" { u32 gbaprof_instr; }
+#define GBAPROF_COUNT() gbaprof_instr++
+#else
+#define GBAPROF_COUNT()
+#endif
+
+#ifdef PCHIST
+/* PC harness only: how often each PC executes (finding idle loops) */
+#define PCHIST_SIZE (1 << 16)
+static struct { u32 pc, n; } pchist[PCHIST_SIZE];
+static inline void pchist_add(u32 pc)
+{
+  u32 h = (pc * 2654435761u) >> 16;
+  while (pchist[h].n && pchist[h].pc != pc)
+    h = (h + 1) & (PCHIST_SIZE - 1);
+  pchist[h].pc = pc;
+  pchist[h].n++;
+}
+extern "C" void pchist_dump(int top)
+{
+  u64 total = 0;
+  for (int i = 0; i < PCHIST_SIZE; i++) total += pchist[i].n;
+  for (int k = 0; k < top; k++) {
+    int best = -1;
+    for (int i = 0; i < PCHIST_SIZE; i++)
+      if (pchist[i].n && (best < 0 || pchist[i].n > pchist[best].n)) best = i;
+    if (best < 0) break;
+    printf("PCHIST %08x %10u %5.2f%%\n", pchist[best].pc, pchist[best].n, 100.0 * pchist[best].n / total);
+    pchist[best].n = 0;
+  }
+}
+#define PCHIST_ADD() pchist_add(reg[REG_PC])
+#else
+#define PCHIST_ADD()
+#endif
+
+#ifdef RETRO_GO
+#include "m4a_hle.h"
+#ifdef HAVE_DYNAREC
+/* the Xtensa dynarec runs the m4a mixer loop natively too (xtensa_stub.c):
+   a translated instruction at a loop head calls m4a_dynarec_run first */
+extern "C" int m4a_dynarec_head(u32 pc) { return pc == m4a_pc_out || pc == m4a_pc_in; }
+extern "C" void m4a_dynarec_check(void)
+{
+  u32 out = m4a_pc_out;
+  m4a_check();
+  if (m4a_pc_out != out)
+    flush_translation_cache_ram();   /* retranslate with the hook at the new loop */
+}
+/* ~0: not handled (the translated code goes on); else the next PC */
+extern "C" u32 m4a_dynarec_run(u32 pc, s32 *cycles)
+{
+  u32 n = reg[REG_N_FLAG], z = reg[REG_Z_FLAG], c = reg[REG_C_FLAG], v = reg[REG_V_FLAG];
+  if (!m4a_run(pc, *cycles, n, z, c, v))
+    return 0xFFFFFFFF;
+  reg[REG_N_FLAG] = n; reg[REG_Z_FLAG] = z; reg[REG_C_FLAG] = c; reg[REG_V_FLAG] = v;
+  return pc;
+}
+#endif
+#endif
+
+#ifdef HAVE_DYNAREC
+/* the dynarec build keeps the interpreter as a fallback only (games that
+   rewrite their own code in a loop): in flash, the internal RAM is short */
+void execute_arm(u32 cycles)
+#else
 IRAM_ATTR void execute_arm(u32 cycles)
+#endif
 {
   u32 opcode;
   u32 condition;
@@ -1479,6 +1565,17 @@ IRAM_ATTR void execute_arm(u32 cycles)
   touch_gamepak_page(pc_region);
 
   cycles_remaining = cycles;
+#ifdef RETRO_GO
+  m4a_check();
+  /* constant for this call (m4a_check above, game load): kept in locals so
+     the per-instruction checks do not reload globals. The two m4a loop heads
+     are 4 or 8 bytes apart: one unsigned range test, then the exact one. */
+  const u32 idle_pc = idle_loop_target_pc;
+  const u32 m4a_lo = m4a_pc_out < m4a_pc_in ? m4a_pc_out : m4a_pc_in;
+  const u32 m4a_span = (m4a_pc_out < m4a_pc_in ? m4a_pc_in : m4a_pc_out) - m4a_lo;
+#else
+  const u32 idle_pc = idle_loop_target_pc;
+#endif
   while(1)
   {
     /* Do not execute until CPU is active */
@@ -1500,24 +1597,41 @@ IRAM_ATTR void execute_arm(u32 cycles)
     {
 arm_loop:
 
-       /* Keep N/Z/C/V in locals during the hot ARM loop.  reg[REG_CPSR]
-        * is synchronized only when an operation actually needs the full CPSR
-        * (PSR/SWI/interrupt paths) or when leaving the execution loop. */
+#ifndef RETRO_GO
+       collapse_flags();
 
        /* Process cheats if we are about to execute the cheat hook */
        if (reg[REG_PC] == cheat_master_hook)
           process_cheats();
+#endif
+       /* RETRO_GO: no cheats, and the flags live in n/z/c/v_flag: CPSR is
+          rebuilt only where it is read (MRS, MSR, SWI, loop exits, which
+          already collapse), not before every instruction */
 
        /* Execute ARM instruction */
        using_instruction(arm);
+       PCHIST_ADD();
+       GBAPROF_COUNT();
        check_pc_region();
        reg[REG_PC] &= ~0x03;
+#ifdef RETRO_GO
+       /* the m4a mixer loop, natively (m4a_hle.h) */
+       if (__builtin_expect(reg[REG_PC] - m4a_lo <= m4a_span, 0) &&
+           (reg[REG_PC] == m4a_pc_out || reg[REG_PC] == m4a_pc_in))
+       {
+         u32 hle_pc = reg[REG_PC];
+         if (m4a_run(hle_pc, cycles_remaining, n_flag, z_flag, c_flag, v_flag))
+         {
+           reg[REG_PC] = hle_pc;
+           goto arm_hle_done;
+         }
+       }
+#endif
        opcode = readaddress32(pc_address_block, (reg[REG_PC] & 0x7FFF));
        condition = opcode >> 28;
 
-       /* AL (0xE) is by far the common ARM condition. Avoid entering the
-        * 16-way condition switch for unconditional instructions. */
-       if(condition != 0xE)
+       /* nearly every ARM instruction is AL: skip the condition dispatch */
+       if (__builtin_expect(condition != 0xE, 0))
        switch(condition)
        {
           case 0x0:
@@ -3050,10 +3164,14 @@ skip_instruction:
        /* End of Execute ARM instruction */
        cycles_remaining -= ws_cyc_seq[(reg[REG_PC] >> 24) & 0xF][1];
 
-       if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
+       if (__builtin_expect(reg[REG_PC] == idle_pc, 0) && cycles_remaining > 0) cycles_remaining = 0;
 
        if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
          goto alert;
+#ifdef RETRO_GO
+arm_hle_done:
+       ;
+#endif
 
     } while(cycles_remaining > 0);
 
@@ -3068,15 +3186,22 @@ skip_instruction:
     {
 thumb_loop:
 
+#ifndef RETRO_GO
        collapse_flags();
 
        /* Process cheats if we are about to execute the cheat hook */
        if (reg[REG_PC] == cheat_master_hook)
           process_cheats();
+#endif
+       /* RETRO_GO: no cheats, and the flags live in n/z/c/v_flag: CPSR is
+          rebuilt only where it is read (MRS, MSR, SWI, loop exits, which
+          already collapse), not before every instruction */
 
        /* Execute THUMB instruction */
 
        using_instruction(thumb);
+       PCHIST_ADD();
+       GBAPROF_COUNT();
        check_pc_region();
        reg[REG_PC] &= ~0x01;
        opcode = readaddress16(pc_address_block, (reg[REG_PC] & 0x7FFF));
@@ -3530,7 +3655,7 @@ thumb_loop:
        /* End of Execute THUMB instruction */
        cycles_remaining -= ws_cyc_seq[(reg[REG_PC] >> 24) & 0xF][0];
 
-       if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
+       if (__builtin_expect(reg[REG_PC] == idle_pc, 0) && cycles_remaining > 0) cycles_remaining = 0;
 
        if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
           goto alert;
