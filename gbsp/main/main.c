@@ -107,6 +107,16 @@ static void gp_save_make_path(const char *rom_path)
     strncat(gp_save_path, ".sav", sizeof(gp_save_path) - strlen(gp_save_path) - 1);
 }
 
+/* loading percentage (gba_memory.c reads the ROM in quarter-blocks). The retro-go function is
+   optional: without it the callback does nothing. */
+extern void (*gamepak_load_progress)(int percent);
+extern void rg_gui_draw_loading(int percent) __attribute__((weak));
+static void load_progress_cb(int percent)
+{
+    if (rg_gui_draw_loading)
+        rg_gui_draw_loading(percent);
+}
+
 static void gp_save_init(const char *rom_path)
 {
     gp_save_make_path(rom_path);
@@ -289,8 +299,28 @@ static bool reset_handler(bool hard)
     return true;
 }
 
+#ifdef HAVE_DYNAREC
+static void jit_flag_write(int c);
+#endif
+
 static void event_handler(int event, void *arg)
 {
+    if (event == RG_EVENT_SHUTDOWN)
+    {
+        /* power-off / quit from the launcher: write a pending battery save at once
+           (the 3 s x 2 checksum poll in gp_save_tick would lose it) and treat the
+           run as clean for the dynarec crash detector */
+        if (gp_save_enabled && (gamepak_backup_dirty || gp_save_pending ||
+                                gp_save_checksum() != gp_save_sum_flushed))
+            gp_save_flush();
+#ifdef HAVE_DYNAREC
+        if (jit_trying)
+        {
+            jit_flag_write(0);
+            jit_trying = false;
+        }
+#endif
+    }
     if (event == RG_EVENT_REDRAW)
     {
         rg_display_submit(shownUpdate, 0);
@@ -364,7 +394,7 @@ static void jit_flag_write(int c)
 /* the dynarec has run long enough (or the user reached the menu): not a crash */
 static void jit_mark_ok(void)
 {
-    if (jit_trying && rg_system_timer() - jit_t0 > 10 * 1000000)
+    if (jit_trying && rg_system_timer() - jit_t0 > 120 * 1000000)
     {
         jit_flag_write(0);
         jit_trying = false;
@@ -512,10 +542,12 @@ void app_main(void)
     // load_bios(RG_BASE_PATH_BIOS "/gba_bios.bin");
 
     memset(gamepak_backup, 0xff, sizeof(gamepak_backup));
+    gamepak_load_progress = load_progress_cb;
     if (load_gamepak(NULL, app->romPath, FEAT_DISABLE, FEAT_DISABLE, SERIAL_MODE_DISABLED) != 0)
     {
         RG_PANIC("Could not load the game file.");
     }
+    gamepak_load_progress = NULL;
 
     gp_save_init(app->romPath);
 
