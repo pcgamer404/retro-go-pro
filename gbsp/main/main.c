@@ -338,8 +338,10 @@ int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned id)
     if (joystick & RG_KEY_RIGHT) val |= (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT);
     if (joystick & RG_KEY_START) val |= (1 << RETRO_DEVICE_ID_JOYPAD_START);
     if (joystick & RG_KEY_SELECT) val |= (1 << RETRO_DEVICE_ID_JOYPAD_SELECT);
-	if (joystick & RG_KEY_L) val |= (1 << RETRO_DEVICE_ID_JOYPAD_X);
-	if (joystick & RG_KEY_R) val |= (1 << RETRO_DEVICE_ID_JOYPAD_Y);
+    /* GBA L/R are libretro JOYPAD_L/R (JOYPAD_X/Y are turbo A/B in gpSP). This handheld's config.h
+       has no RG_KEY_L/R, only X and Y buttons: X = L, Y = R (swap the two lines if reversed) */
+    if (joystick & (RG_KEY_L | RG_KEY_X)) val |= (1 << RETRO_DEVICE_ID_JOYPAD_L);
+    if (joystick & (RG_KEY_R | RG_KEY_Y)) val |= (1 << RETRO_DEVICE_ID_JOYPAD_R);
     if (joystick & RG_KEY_B) val |= (1 << RETRO_DEVICE_ID_JOYPAD_B);
     if (joystick & RG_KEY_A) val |= (1 << RETRO_DEVICE_ID_JOYPAD_A);
     return val;
