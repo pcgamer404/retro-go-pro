@@ -1,0 +1,21 @@
+{
+  "id": "oregontrail",
+  "name": "Oregon Trail",
+  "file": "OregonTrail.rgport",
+  "app": "oregontrail",
+  "runtime": "native-slot",
+  "slot": "ports",
+  "launch_file": "OregonTrail.trail",
+  "install_dir": "oregontrail",
+  "save_dir": "oregontrail",
+  "assets": [
+    "OregonTrail.trail",
+    "art",
+    "music",
+    "data"
+  ],
+  "build_defs": {
+    "RG_ENABLE_NETWORKING": "1"
+  },
+  "description": "Native C++ Oregon Trail for ESP32-S3 Retro-Go"
+}

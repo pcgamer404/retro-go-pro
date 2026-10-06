@@ -559,6 +559,13 @@ static void mame_task(void *arg)
     }
 }
 
+/* Plain FreeRTOS entry: avoids depending on this tree's rg_task_create() signature. */
+static void mame_task_entry(void *arg)
+{
+    mame_task(arg);
+    vTaskDelete(NULL);
+}
+
 void app_main(void)
 {
     const rg_config_t config = {
@@ -577,7 +584,7 @@ void app_main(void)
     rg_storage_mkdir(SYSTEM_DIR);
     rg_storage_mkdir(SAVE_DIR);
 
-    rg_task_create("mame", &mame_task, NULL, 32 * 1024, RG_TASK_PRIORITY_5, 0);
+    xTaskCreatePinnedToCore(mame_task_entry, "mame", 32 * 1024, NULL, RG_TASK_PRIORITY_5, NULL, 0);
     while (1)
         rg_task_delay(1000);
 }

@@ -194,8 +194,11 @@ static void nsf_draw_overlay(void)
 }
 
 
+extern rg_gui_event_t nes_core_update_cb(rg_gui_option_t *option, rg_gui_event_t event);
+
 static void options_handler(rg_gui_option_t *dest)
 {
+    *dest++ = (rg_gui_option_t){0, "Core", "-", RG_DIALOG_FLAG_SKIP, &nes_core_update_cb};
     *dest++ = (rg_gui_option_t){0, _("Palette"),      "-", RG_DIALOG_FLAG_NORMAL, &palette_update_cb};
     *dest++ = (rg_gui_option_t){0, _("Overscan"),     "-", RG_DIALOG_FLAG_NORMAL, &overscan_update_cb};
     *dest++ = (rg_gui_option_t){0, _("Crop sides"),   "-", RG_DIALOG_FLAG_NORMAL, &autocrop_update_cb};
@@ -203,7 +206,7 @@ static void options_handler(rg_gui_option_t *dest)
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
-void nes_main(void)
+void nofrendo_main(void)
 {
     const rg_handlers_t handlers = {
         .loadState = &load_state_handler,
@@ -309,20 +312,20 @@ void nes_main(void)
         nes_setvidbuf(currentUpdate->data);
         nes_emulate(drawFrame);
 
-        // Tick before submitting audio/syncing
-        rg_system_tick(rg_system_timer() - startTime);
+        // Tick before submitting audio/syncing. "busy" excludes the audio wait (idle time).
+        const int busy = rg_system_timer() - startTime;
+        rg_system_tick(busy);
 
         // Audio is used to pace emulation :)
         rg_audio_submit((void*)nes->apu->buffer, nes->apu->samples_per_frame);
 
         if (skipFrames == 0)
         {
-            int elapsed = rg_system_timer() - startTime;
             if (nsfPlayer)
                 skipFrames = 10, nsf_draw_overlay();
             else if (app->frameskip > 0)
                 skipFrames = app->frameskip;
-            else if (elapsed > app->frameTime + 1500) // Allow some jitter
+            else if (busy > app->frameTime + 1500) // Allow some jitter
                 skipFrames = 1; // (elapsed / frameTime)
             else if (drawFrame && slowFrame)
                 skipFrames = 1;

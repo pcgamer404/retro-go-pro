@@ -49,6 +49,8 @@ _Static_assert(FIFO_RX_LINES + FIFO_NPTX_LINES + FIFO_PTX_LINES <= 200, "USB FIF
 
 enum { EV_NEW_DEV = 1, EV_GONE = 2 };
 
+static int64_t idle_until = 0; // no-dongle pacing, see driver_submit()
+
 typedef struct
 {
     uint8_t intf, alt, ep;
@@ -649,6 +651,7 @@ static void set_rates(int sample_rate)
 static bool driver_init(int device, int sample_rate)
 {
     u.enabled = true;
+    idle_until = 0;
     u.volume = 50;
     set_rates(sample_rate);
     update_gain();
@@ -713,9 +716,17 @@ static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
     u.last_count = count;
     if (!u.enabled || !u.streaming)
     {
-        rg_usleep((uint32_t)(((uint64_t)count * 1000000) / (u.src_rate ? u.src_rate : 32768)));
+        // No dongle: behave exactly like the Dummy sink. Sleep only until the previous buffer would have
+        // finished playing, so the time the emulator spent running counts towards the frame period.
+        // (A plain sleep of the full buffer length ADDS to the emulation time: 60 fps became ~50, and the
+        // emulators' own frameskip logic then made it worse.)
+        const int64_t now = rg_system_timer();
+        if (idle_until > now)
+            rg_usleep((uint32_t)(idle_until - now));
+        idle_until = rg_system_timer() + (int64_t)(((uint64_t)count * 1000000) / (u.src_rate ? u.src_rate : 32768));
         return true;
     }
+    idle_until = 0;
 
     // the dongle's clock is the master: wait until the ring has room (never more than 100 ms)
     const int64_t t0 = rg_system_timer();

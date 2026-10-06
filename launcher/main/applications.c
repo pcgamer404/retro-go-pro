@@ -8,6 +8,7 @@
 #include "applications.h"
 #include "bookmarks.h"
 #include "gui.h"
+#include "rg_ports.h"
 
 #define CRC_CACHE_MAGIC 0x21112223
 #define CRC_CACHE_MAX_ENTRIES 8192
@@ -584,8 +585,33 @@ static void show_file_info(retro_file_t *file)
     }
 }
 
+// NES only: per-ROM core (0 = FCEUmm, 1 = Nofrendo), stored in the "nes" settings section.
+// Same key as nes_main() in retro-core: "Core" + crc32 of the ROM path.
+static char nes_core_key[16];
+
+static rg_gui_event_t nes_core_cb(rg_gui_option_t *opt, rg_gui_event_t event)
+{
+    int core = rg_settings_get_number("nes", nes_core_key, rg_settings_get_number("nes", "Core", 0)) ? 1 : 0;
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT || event == RG_DIALOG_ENTER)
+    {
+        core = !core;
+        rg_settings_set_number("nes", nes_core_key, core);
+        rg_settings_commit();
+        strcpy(opt->value, core ? "Nofrendo" : "FCEUmm");
+        return RG_DIALOG_REDRAW;
+    }
+    strcpy(opt->value, core ? "Nofrendo" : "FCEUmm");
+    return RG_DIALOG_VOID;
+}
+
 void application_show_file_menu(retro_file_t *file, bool advanced)
 {
+    if (rg_ports_owns(file)) // RG Ports tab has its own menu (rg_ports.c), all others are untouched
+    {
+        rg_ports_file_menu(file);
+        return;
+    }
+
     char *rom_path = strdup(get_file_path(file));
     char *sram_path = rg_emu_get_path(RG_PATH_SAVE_SRAM, rom_path);
     rg_emu_states_t *savestates = rg_emu_get_states(rom_path, 4);
@@ -602,8 +628,22 @@ void application_show_file_menu(retro_file_t *file, bool advanced)
         {2, _("Delete save"), NULL, has_save || has_sram, NULL},
         RG_DIALOG_SEPARATOR,
         {4, _("Properties"), NULL, 1, NULL},
+        RG_DIALOG_SEPARATOR,
+        {6, "Core", "-", 0, &nes_core_cb}, // enabled for NES below
         RG_DIALOG_END,
     };
+
+    if (strcmp(file->app->short_name, "nes") == 0)
+    {
+        snprintf(nes_core_key, sizeof(nes_core_key), "Core%08x",
+                 (unsigned)rg_crc32(0, (const uint8_t *)rom_path, strlen(rom_path)));
+        choices[RG_COUNT(choices) - 2].flags = 1;
+    }
+    else
+    {
+        choices[RG_COUNT(choices) - 3].flags = RG_DIALOG_FLAG_HIDDEN; // separator
+        choices[RG_COUNT(choices) - 2].flags = RG_DIALOG_FLAG_HIDDEN; // Core row
+    }
 
     int sel = rg_gui_dialog(NULL, choices, has_save ? 0 : 1);
     switch (sel)
@@ -640,6 +680,9 @@ void application_show_file_menu(retro_file_t *file, bool advanced)
 
     case 4:
         show_file_info(file);
+        break;
+
+    case 6: // Core row handled by its callback
         break;
 
     default:
@@ -719,6 +762,9 @@ void applications_init(void) {
   application("Store", "store", "none", "store", 0);
   application("Open Tyrian", "opentyrian", "tyr cdt", "opentyrian", 0);
   application("Oregon Trail", "oregontrail", "trail", "oregontrail", 0);
+#if RG_ENABLE_PORTS
+  application(RG_PORTS_TITLE, RG_PORTS_NAME, "bin", RG_PORTS_PARTITION, 0);
+#endif
   // application("Commander Keen", "clonekeen", "keen ck1 ck2", "clonekeen", 0);
 
     // Special app to bootstrap native esp32 binaries from the SD card

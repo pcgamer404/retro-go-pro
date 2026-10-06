@@ -14,7 +14,7 @@ void app_main(void)
 
     if (strcmp(app->configNs, "gbc") == 0 || strcmp(app->configNs, "gb") == 0)
         gbc_main();
-    else if (strcmp(app->configNs, "nes") == 0)
+    else if (strcmp(app->configNs, "nes") == 0 || strcmp(app->configNs, "fds") == 0)
         nes_main();
     else if (strcmp(app->configNs, "pce") == 0)
         pce_main();

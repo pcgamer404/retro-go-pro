@@ -2338,7 +2338,7 @@ static void ym_timers_run(int target)
 static void ym_worker(void *arg)
 {
   rg_task_msg_t msg;
-  while (rg_task_receive(&msg))
+  while (rg_task_receive(&msg, -1))
   {
     if (msg.type == RG_TASK_MSG_STOP)
       break;
@@ -2383,7 +2383,7 @@ void ym2612_worker_start(void)
 {
   if (!ym_task)
   {
-    ym_task = rg_task_create("ym2612", &ym_worker, NULL, 4 * 1024, RG_TASK_PRIORITY_5, 1);
+    ym_task = rg_task_create("ym2612", &ym_worker, NULL, 4 * 1024, 1, RG_TASK_PRIORITY_5, 1);
     RG_LOGI("YM2612 synthesis on core 1");
   }
   ym_worker_wait();
@@ -2449,7 +2449,7 @@ int16_t *ym2612_frame_end(int end_target, int enabled)
   if (enabled)
   {
     ym_busy = 1;
-    rg_task_send(ym_task, &(rg_task_msg_t){ .dataPtr = job });
+    rg_task_send(ym_task, &(rg_task_msg_t){ .dataPtr = job }, -1);
   }
   else
     memset(job->out, 0, sizeof(ym_bufs[0]));
