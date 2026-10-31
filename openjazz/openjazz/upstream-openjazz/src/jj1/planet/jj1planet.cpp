@@ -1,0 +1,159 @@
+
+/**
+ *
+ * @file jj1planet.cpp
+ *
+ * Part of the OpenJazz project
+ *
+ * @par History:
+ * - 23rd August 2005: Created planet.c
+ * - 3rd February 2009: Renamed planet.c to planet.cpp
+ * - 1st August 2012: Renamed planet.cpp to jj1planet.cpp
+ *
+ * @par Licence:
+ * Copyright (c) 2005-2017 AJ Thomson
+ *
+ * OpenJazz is distributed under the terms of
+ * the GNU General Public License, version 2.0
+ *
+ * @par Description:
+ * Deals with the loading, displaying and freeing of the planet landing
+ * sequence.
+ *
+ */
+
+
+#include "jj1planet.h"
+
+#include "io/controls.h"
+#include "io/file.h"
+#include "io/gfx/font.h"
+#include "io/gfx/video.h"
+#include "io/sound.h"
+#include "loop.h"
+#include "util.h"
+
+#include <string.h>
+
+
+/**
+ * Create a JJ1 planet approach sequence.
+ *
+ * @param fileName Name of the file containing the planet data
+ * @param previous The ID of the last planet approach sequence
+ */
+JJ1Planet::JJ1Planet (char * fileName, int previous) {
+
+	File *file;
+	unsigned char *pixels;
+	int count;
+
+	try {
+
+		file = new File(fileName, PATH_TYPE_GAME);
+
+	} catch (int e) {
+
+		throw;
+
+	}
+
+	id = file->loadShort();
+
+	if (id == previous) {
+
+		// Not approaching a planet if already there
+
+		delete file;
+
+		throw E_NONE;
+
+	}
+
+	// Load planet name
+	name = file->loadTerminatedString();
+
+	// Lower-case the name
+	for (count = 0; name[count]; count++) {
+
+		if ((name[count] >= 65) && (name[count] <= 90)) name[count] += 32;
+
+	}
+
+	// Load the palette
+	file->loadPalette(palette, false);
+
+	// Load the planet image
+	pixels = file->loadBlock(64 * 55);
+	sprite.setPixels(pixels, 64, 55, 0);
+	delete[] pixels;
+
+
+	delete file;
+
+}
+
+
+/**
+ * Delete the JJ1 planet approach sequence.
+ */
+JJ1Planet::~JJ1Planet () {
+
+	delete[] name;
+
+}
+
+
+/**
+ * Get the ID of the planet approach squence.
+ *
+ * @return The ID
+ */
+int JJ1Planet::getId () {
+
+	return id;
+
+}
+
+
+/**
+ * Run the JJ1 planet approach sequence.
+ *
+ * @return Error code
+ */
+int JJ1Planet::play () {
+
+	unsigned int tickOffset;
+
+	tickOffset = globalTicks;
+
+	stopMusic();
+
+	video.setPalette(palette);
+
+	while (true) {
+
+		if (loop(NORMAL_LOOP) == E_QUIT) return E_QUIT;
+
+		if (controls.release(C_ESCAPE) || controls.wasCursorReleased()) return E_NONE;
+
+		SDL_Delay(T_MENU_FRAME);
+
+		video.clearScreen(0);
+
+		if (globalTicks - tickOffset < F2)
+			sprite.drawScaled(canvasW >> 1, canvasH >> 1, globalTicks - tickOffset);
+		else if (globalTicks - tickOffset < F4)
+			sprite.drawScaled(canvasW >> 1, canvasH >> 1, F2);
+		else if (globalTicks - tickOffset < F4 + FQ)
+			sprite.drawScaled(canvasW >> 1, canvasH >> 1, (globalTicks - tickOffset - F4) * 32 + F2);
+		else return E_NONE;
+
+		fontmn1->showString("now approaching", (canvasW >> 1), 2, alignX::Center);
+		fontmn1->showString(name, (canvasW >> 1), canvasH - 2, alignX::Center, alignY::Bottom);
+
+	}
+
+	return E_NONE;
+
+}

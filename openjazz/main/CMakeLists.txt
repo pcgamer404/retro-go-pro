@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.5)
+set(COMPONENT_REQUIRES retro-go openjazz)
+set(COMPONENT_SRCDIRS ".")
+set(COMPONENT_ADD_INCLUDEDIRS ".")
+register_component()
+rg_setup_compile_options()

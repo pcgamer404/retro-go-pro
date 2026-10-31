@@ -1,0 +1,11 @@
+/*
+ * Quake II model/skin image (tools/mkassets.py), linked into flash rodata and
+ * used in place by the engine. Configured by main/CMakeLists.txt.
+ */
+.section .rodata.q2assets, "a", @progbits
+.balign 16
+.global q2_assets_start
+q2_assets_start:
+.incbin "@Q2_ASSETS_FILE@"
+.global q2_assets_end
+q2_assets_end:

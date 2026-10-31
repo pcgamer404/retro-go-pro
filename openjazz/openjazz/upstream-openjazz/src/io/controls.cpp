@@ -1,0 +1,762 @@
+
+/**
+ *
+ * @file controls.cpp
+ *
+ * Part of the OpenJazz project
+ *
+ * @par History:
+ * - 23rd August 2005: Created main.c
+ * - 22nd July 2008: Created util.c from parts of main.c
+ * - 3rd February 2009: Renamed main.c to main.cpp
+ * - 13th July 2009: Created controls.cpp from parts of main.cpp
+ *
+ * @par Licence:
+ * Copyright (c) 2005-2017 AJ Thomson
+ * Copyright (c) 2015-2026 Carsten Teibes
+ *
+ * OpenJazz is distributed under the terms of
+ * the GNU General Public License, version 2.0
+ *
+ * @par Description:
+ * Deals with input.
+ *
+ */
+
+#include "SDL_wrapper.h"
+#include "controls.h"
+#include "gfx/video.h"
+#include "platforms/platforms.h"
+#include "loop.h"
+#include "util.h"
+#include "log.h"
+
+#if !OJ_SDL3
+	// Define some stuff to be SDL3 compatible
+
+	#define SDLK_P SDLK_p
+	#define SDLK_Y SDLK_y
+	#define SDLK_N SDLK_n
+
+	#define SDL_EVENT_JOYSTICK_BUTTON_DOWN SDL_JOYBUTTONDOWN
+	#define SDL_EVENT_JOYSTICK_BUTTON_UP SDL_JOYBUTTONUP
+	#define SDL_EVENT_JOYSTICK_BUTTON_UP SDL_JOYBUTTONUP
+	#define SDL_EVENT_JOYSTICK_AXIS_MOTION SDL_JOYAXISMOTION
+	#define SDL_EVENT_JOYSTICK_HAT_MOTION SDL_JOYHATMOTION
+	#define SDL_EVENT_MOUSE_BUTTON_DOWN SDL_MOUSEBUTTONDOWN
+	#define SDL_EVENT_MOUSE_BUTTON_UP SDL_MOUSEBUTTONUP
+	#define SDL_EVENT_MOUSE_MOTION SDL_MOUSEMOTION
+	#define SDL_BUTTON_MASK SDL_BUTTON
+#endif
+
+/* Default Keyboard config */
+#ifndef DEFAULT_KEY_UP
+	#define DEFAULT_KEY_UP      (SDLK_UP)
+#endif
+#ifndef DEFAULT_KEY_DOWN
+	#define DEFAULT_KEY_DOWN    (SDLK_DOWN)
+#endif
+#ifndef DEFAULT_KEY_LEFT
+	#define DEFAULT_KEY_LEFT    (SDLK_LEFT)
+#endif
+#ifndef DEFAULT_KEY_RIGHT
+	#define DEFAULT_KEY_RIGHT   (SDLK_RIGHT)
+#endif
+#ifndef DEFAULT_KEY_JUMP
+	#define DEFAULT_KEY_JUMP    (SDLK_SPACE)
+#endif
+#ifndef DEFAULT_KEY_SWIM
+	#define DEFAULT_KEY_SWIM    (SDLK_SPACE)
+#endif
+#ifndef DEFAULT_KEY_FIRE
+	#define DEFAULT_KEY_FIRE    (SDLK_LALT)
+#endif
+#ifndef DEFAULT_KEY_CHANGE
+	#define DEFAULT_KEY_CHANGE  (SDLK_RCTRL)
+#endif
+#ifndef DEFAULT_KEY_ENTER
+	#define DEFAULT_KEY_ENTER   (SDLK_RETURN)
+#endif
+#ifndef DEFAULT_KEY_ESCAPE
+	#define DEFAULT_KEY_ESCAPE  (SDLK_ESCAPE)
+#endif
+#ifndef DEFAULT_KEY_STATS
+	#define DEFAULT_KEY_STATS   (SDLK_F9)
+#endif
+#ifndef DEFAULT_KEY_PAUSE
+	#define DEFAULT_KEY_PAUSE   (SDLK_P)
+#endif
+#ifndef DEFAULT_KEY_YES
+	#define DEFAULT_KEY_YES     (SDLK_Y)
+#endif
+#ifndef DEFAULT_KEY_NO
+	#define DEFAULT_KEY_NO      (SDLK_N)
+#endif
+
+/* These are optional */
+#ifndef DEFAULT_KEY_BLASTER
+	#define DEFAULT_KEY_BLASTER (SDLK_1)
+#endif
+#ifndef DEFAULT_KEY_TOASTER
+	#define DEFAULT_KEY_TOASTER (SDLK_2)
+#endif
+#ifndef DEFAULT_KEY_MISSILE
+	#define DEFAULT_KEY_MISSILE (SDLK_3)
+#endif
+#ifndef DEFAULT_KEY_BOUNCER
+	#define DEFAULT_KEY_BOUNCER (SDLK_4)
+#endif
+#ifndef DEFAULT_KEY_TNT
+	#define DEFAULT_KEY_TNT     (SDLK_5)
+#endif
+
+/* Arbitrary default button config */
+#ifndef DEFAULT_BUTTON_UP
+	#define DEFAULT_BUTTON_UP     (-1)
+#endif
+#ifndef DEFAULT_BUTTON_DOWN
+	#define DEFAULT_BUTTON_DOWN   (-1)
+#endif
+#ifndef DEFAULT_BUTTON_LEFT
+	#define DEFAULT_BUTTON_LEFT   (-1)
+#endif
+#ifndef DEFAULT_BUTTON_RIGHT
+	#define DEFAULT_BUTTON_RIGHT  (-1)
+#endif
+#ifndef DEFAULT_BUTTON_JUMP
+	#define DEFAULT_BUTTON_JUMP   (1)
+#endif
+#ifndef DEFAULT_BUTTON_SWIM
+	#define DEFAULT_BUTTON_SWIM   (1)
+#endif
+#ifndef DEFAULT_BUTTON_FIRE
+	#define DEFAULT_BUTTON_FIRE   (0)
+#endif
+#ifndef DEFAULT_BUTTON_CHANGE
+	#define DEFAULT_BUTTON_CHANGE (3)
+#endif
+#ifndef DEFAULT_BUTTON_ENTER
+	#define DEFAULT_BUTTON_ENTER  (0)
+#endif
+#ifndef DEFAULT_BUTTON_ESCAPE
+	#define DEFAULT_BUTTON_ESCAPE (5)
+#endif
+#ifndef DEFAULT_BUTTON_STATS
+	#define DEFAULT_BUTTON_STATS  (-1)
+#endif
+#ifndef DEFAULT_BUTTON_PAUSE
+	#define DEFAULT_BUTTON_PAUSE  (4)
+#endif
+#ifndef DEFAULT_BUTTON_YES
+	#define DEFAULT_BUTTON_YES    (-1)
+#endif
+#ifndef DEFAULT_BUTTON_NO
+	#define DEFAULT_BUTTON_NO     (-1)
+#endif
+
+/**
+ * Set up the default controls.
+ */
+Controls::Controls () {
+
+	int count;
+
+	keys[C_UP].key = DEFAULT_KEY_UP;
+	keys[C_DOWN].key = DEFAULT_KEY_DOWN;
+	keys[C_LEFT].key = DEFAULT_KEY_LEFT;
+	keys[C_RIGHT].key = DEFAULT_KEY_RIGHT;
+	keys[C_JUMP].key = DEFAULT_KEY_JUMP;
+	keys[C_SWIM].key = DEFAULT_KEY_SWIM;
+	keys[C_FIRE].key = DEFAULT_KEY_FIRE;
+	keys[C_CHANGE].key = DEFAULT_KEY_CHANGE;
+	keys[C_ENTER].key = DEFAULT_KEY_ENTER;
+	keys[C_ESCAPE].key = DEFAULT_KEY_ESCAPE;
+	keys[C_BLASTER].key = DEFAULT_KEY_BLASTER;
+	keys[C_TOASTER].key = DEFAULT_KEY_TOASTER;
+	keys[C_MISSILE].key = DEFAULT_KEY_MISSILE;
+	keys[C_BOUNCER].key = DEFAULT_KEY_BOUNCER;
+	keys[C_TNT].key = DEFAULT_KEY_TNT;
+	keys[C_STATS].key = DEFAULT_KEY_STATS;
+	keys[C_PAUSE].key = DEFAULT_KEY_PAUSE;
+	keys[C_YES].key = DEFAULT_KEY_YES;
+	keys[C_NO].key = DEFAULT_KEY_NO;
+
+
+	buttons[C_UP].button = DEFAULT_BUTTON_UP;
+	buttons[C_DOWN].button = DEFAULT_BUTTON_DOWN;
+	buttons[C_LEFT].button = DEFAULT_BUTTON_LEFT;
+	buttons[C_RIGHT].button = DEFAULT_BUTTON_RIGHT;
+	buttons[C_JUMP].button = DEFAULT_BUTTON_JUMP;
+	buttons[C_SWIM].button = DEFAULT_BUTTON_SWIM;
+	buttons[C_FIRE].button = DEFAULT_BUTTON_FIRE;
+	buttons[C_CHANGE].button = DEFAULT_BUTTON_CHANGE;
+	buttons[C_ENTER].button = DEFAULT_BUTTON_ENTER;
+	buttons[C_ESCAPE].button = DEFAULT_BUTTON_ESCAPE;
+	buttons[C_BLASTER].button = -1;
+	buttons[C_TOASTER].button = -1;
+	buttons[C_MISSILE].button = -1;
+	buttons[C_BOUNCER].button = -1;
+	buttons[C_TNT].button = -1;
+	buttons[C_STATS].button = DEFAULT_BUTTON_STATS;
+	buttons[C_PAUSE].button = DEFAULT_BUTTON_PAUSE;
+	buttons[C_YES].button = DEFAULT_BUTTON_YES;
+	buttons[C_NO].button = DEFAULT_BUTTON_NO;
+
+
+	axes[C_UP].axis = 1;
+	axes[C_UP].direction = false;
+	axes[C_DOWN].axis = 1;
+	axes[C_DOWN].direction = true;
+	axes[C_LEFT].axis = 0;
+	axes[C_LEFT].direction = false;
+	axes[C_RIGHT].axis = 0;
+	axes[C_RIGHT].direction = true;
+	axes[C_JUMP].axis = -1;
+	axes[C_SWIM].axis = -1;
+	axes[C_FIRE].axis = -1;
+	axes[C_CHANGE].axis = -1;
+	axes[C_ENTER].axis = -1;
+	axes[C_ESCAPE].axis = -1;
+	axes[C_BLASTER].axis = -1;
+	axes[C_TOASTER].axis = -1;
+	axes[C_MISSILE].axis = -1;
+	axes[C_BOUNCER].axis = -1;
+	axes[C_TNT].axis = -1;
+	axes[C_STATS].axis = -1;
+	axes[C_PAUSE].axis = -1;
+	axes[C_YES].axis = -1;
+	axes[C_NO].axis = -1;
+
+
+	hats[C_UP].hat = 0;
+	hats[C_UP].direction = SDL_HAT_UP;
+	hats[C_DOWN].hat = 0;
+	hats[C_DOWN].direction = SDL_HAT_DOWN;
+	hats[C_LEFT].hat = 0;
+	hats[C_LEFT].direction = SDL_HAT_LEFT;
+	hats[C_RIGHT].hat = 0;
+	hats[C_RIGHT].direction = SDL_HAT_RIGHT;
+	hats[C_JUMP].hat = -1;
+	hats[C_SWIM].hat = -1;
+	hats[C_FIRE].hat = -1;
+	hats[C_CHANGE].hat = -1;
+	hats[C_ENTER].hat = -1;
+	hats[C_ESCAPE].hat = -1;
+	hats[C_BLASTER].hat = -1;
+	hats[C_TOASTER].hat = -1;
+	hats[C_MISSILE].hat = -1;
+	hats[C_BOUNCER].hat = -1;
+	hats[C_TNT].hat = -1;
+	hats[C_STATS].hat = -1;
+	hats[C_PAUSE].hat = -1;
+	hats[C_YES].hat = -1;
+	hats[C_NO].hat = -1;
+
+
+	for (count = 0; count < CONTROLS; count++) {
+
+		keys[count].pressed = false;
+		buttons[count].pressed = false;
+		axes[count].pressed = false;
+		hats[count].pressed = false;
+
+		controlstates[count].time = 0;
+		controlstates[count].state = false;
+
+	}
+
+	cursorX = cursorY = 0;
+	cursorPressed = cursorReleased = false;
+	wheelUp = wheelDown = 0;
+
+}
+
+void Controls::init() {
+#if OJ_SDL3
+	if(SDL_HasJoystick()) SDL_OpenJoystick(0);
+#else
+	if (SDL_NumJoysticks() > 0) SDL_JoystickOpen(0);
+#endif
+}
+
+void Controls::deinit() {
+#if OJ_SDL3
+	if(SDL_HasJoystick()) SDL_CloseJoystick(0);
+#else
+	if (SDL_NumJoysticks() > 0) SDL_JoystickClose(0);
+#endif
+}
+
+/**
+ * Set the key to use for the specified control.
+ *
+ * @param control The control
+ * @param key The key to use
+ */
+void Controls::setKey (int control, int key) {
+
+	keys[control].key = key;
+	keys[control].pressed = false;
+
+}
+
+
+/**
+ * Set the button to use for the specified control.
+ *
+ * @param control The control
+ * @param button The button to use
+ */
+void Controls::setButton (int control, int button) {
+
+	buttons[control].button = button;
+	buttons[control].pressed = false;
+
+}
+
+
+/**
+ * Set the axis and direction to use for the specified control.
+ *
+ * @param control The control
+ * @param axis The axis to use
+ * @param direction Whether or not to use positive axis values
+ */
+void Controls::setAxis (int control, int axis, bool direction) {
+
+	axes[control].axis = axis;
+	axes[control].direction = direction;
+	axes[control].pressed = false;
+
+}
+
+
+/**
+ * Set the hat and direction to use for the specified control.
+ *
+ * @param control The control
+ * @param hat The hat to use
+ * @param direction The direction to use
+ */
+void Controls::setHat (int control, int hat, int direction) {
+
+	hats[control].hat = hat;
+	hats[control].direction = direction;
+	hats[control].pressed = false;
+
+}
+
+
+/**
+ * Get the key being used for the specified control.
+ *
+ * @param control The control
+ *
+ * @return The key being used
+ */
+int Controls::getKey (int control) {
+
+	return keys[control].key;
+
+}
+
+
+/**
+ * Get the button being used for the specified control.
+ *
+ * @param control The control
+ *
+ * @return The button being used
+ */
+int Controls::getButton (int control) {
+
+	return buttons[control].button;
+
+}
+
+
+/**
+ * Get the axis being used for the specified control.
+ *
+ * @param control The control
+ *
+ * @return The axis being used
+ */
+int Controls::getAxis (int control) {
+
+	return axes[control].axis;
+
+}
+
+
+/**
+ * Get the direction of the axis being used for the specified control.
+ *
+ * @param control The control
+ *
+ * @return True if positive values of the axis are being used
+ */
+int Controls::getAxisDirection (int control) {
+
+	return axes[control].direction;
+
+}
+
+
+/**
+ * Get the hat being used for the specified control.
+ *
+ * @param control The control
+ *
+ * @return The hat being used
+ */
+int Controls::getHat (int control) {
+
+	return hats[control].hat;
+
+}
+
+
+/**
+ * Get the direction of the hat being used for the specified control.
+ *
+ * @param control The control
+ *
+ * @return hat direction
+ */
+int Controls::getHatDirection (int control) {
+
+	return hats[control].direction;
+
+}
+
+
+/**
+ * Set the position and state of the cursor.
+ *
+ * @param x The x-coordinate of the cursor
+ * @param y The y-coordinate of the cursor
+ * @param pressed The state of the cursor
+ */
+void Controls::setCursor(int x, int y, bool pressed) {
+
+	cursorX = x;
+	cursorY = y;
+	cursorPressed = pressed;
+	cursorReleased = !pressed;
+
+}
+
+
+/**
+ * Update controls based on a system event.
+ *
+ * @param event The system event. Non-input events will be ignored
+ * @param type Type of loop. Normal, typing, or input configuration
+ *
+ * @return Error code
+ */
+int Controls::update (SDL_Event *event, LoopType type) {
+
+	int count;
+
+	count = CONTROLS;
+
+	switch (event->type) {
+#if OJ_SDL3
+		case SDL_EVENT_KEY_DOWN:
+			if (type == SET_KEY_LOOP) return event->key.key;
+
+			for (count = 0; count < CONTROLS; count++)
+				if (event->key.key == (unsigned int)keys[count].key)
+					keys[count].pressed = true;
+
+			if (type == TYPING_LOOP) return event->key.key;
+#else
+		case SDL_KEYDOWN:
+			if (type == SET_KEY_LOOP) return event->key.keysym.sym;
+
+			for (count = 0; count < CONTROLS; count++)
+				if (event->key.keysym.sym == keys[count].key)
+					keys[count].pressed = true;
+
+			if (type == TYPING_LOOP) return event->key.keysym.sym;
+#endif
+
+			break;
+
+#if OJ_SDL3
+		case SDL_EVENT_KEY_UP:
+			for (count = 0; count < CONTROLS; count++)
+				if (event->key.key == (unsigned int)keys[count].key)
+					keys[count].pressed = false;
+#else
+		case SDL_KEYUP:
+			for (count = 0; count < CONTROLS; count++)
+				if (event->key.keysym.sym == keys[count].key)
+					keys[count].pressed = false;
+#endif
+
+			break;
+
+		case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+			if (type == SET_JOYSTICK_LOOP) return JOYSTICKB | event->jbutton.button;
+
+			for (count = 0; count < CONTROLS; count++)
+				if (event->jbutton.button == buttons[count].button)
+					buttons[count].pressed = true;
+
+			break;
+
+		case SDL_EVENT_JOYSTICK_BUTTON_UP:
+			for (count = 0; count < CONTROLS; count++)
+				if (event->jbutton.button == buttons[count].button)
+					buttons[count].pressed = false;
+
+			break;
+
+		case SDL_EVENT_JOYSTICK_AXIS_MOTION:
+			if (type == SET_JOYSTICK_LOOP) {
+
+				if (event->jaxis.value < -16384)
+					return JOYSTICKANEG | event->jaxis.axis;
+				else if (event->jaxis.value > 16384)
+					return JOYSTICKAPOS | event->jaxis.axis;
+
+			}
+
+			for (count = 0; count < CONTROLS; count++)
+				if (event->jaxis.axis == axes[count].axis) {
+
+					if (!axes[count].direction && (event->jaxis.value < -16384))
+						axes[count].pressed = true;
+					else if (axes[count].direction && (event->jaxis.value > 16384))
+						axes[count].pressed = true;
+					else
+						axes[count].pressed = false;
+
+				}
+
+			break;
+
+		case SDL_EVENT_JOYSTICK_HAT_MOTION:
+			if (type == SET_JOYSTICK_LOOP) {
+
+				switch(event->jhat.value) {
+					case SDL_HAT_UP:
+						return JOYSTICKHUP  | event->jhat.hat;
+					case SDL_HAT_LEFT:
+						return JOYSTICKHLFT | event->jhat.hat;
+					case SDL_HAT_RIGHT:
+						return JOYSTICKHRHT | event->jhat.hat;
+					case SDL_HAT_DOWN:
+						return JOYSTICKHDWN | event->jhat.hat;
+				}
+			}
+
+			for(count = 0; count < CONTROLS; count++)
+				if (event->jhat.hat == hats[count].hat) {
+
+					if (hats[count].direction & event->jhat.value)
+						hats[count].pressed = true;
+					else
+						hats[count].pressed = false;
+
+				}
+
+			break;
+
+		case SDL_EVENT_MOUSE_MOTION:
+			if(event->motion.state & SDL_BUTTON_MASK(1))
+				setCursor(event->motion.x, event->motion.y, true);
+
+			break;
+
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+			if (event->button.button == SDL_BUTTON_LEFT) {
+
+				setCursor(event->button.x, event->button.y, true);
+
+			} else if (event->button.button == 4) {
+
+				wheelUp++;
+
+			} else if (event->button.button == 5) {
+
+				wheelDown++;
+
+			}
+
+			break;
+
+		case SDL_EVENT_MOUSE_BUTTON_UP:
+			if (event->button.button == SDL_BUTTON_LEFT) {
+
+				setCursor(event->button.x, event->button.y, false);
+
+			}
+
+			break;
+
+	}
+
+	return E_NONE;
+
+}
+
+
+/**
+ * Process input iteration.
+ *
+ * Called once per game iteration. Updates input.
+ */
+void Controls::loop () {
+
+	int count;
+
+	// Apply controls to universal control tracking
+	for (count = 0; count < CONTROLS; count++)
+		controlstates[count].state = (controlstates[count].time < globalTicks) &&
+			(keys[count].pressed || buttons[count].pressed ||
+			axes[count].pressed || hats[count].pressed);
+
+	if (wheelUp) {
+
+		controlstates[C_UP].state = true;
+		wheelUp--;
+
+	}
+
+	if (wheelDown) {
+
+		controlstates[C_DOWN].state = true;
+		wheelDown--;
+
+	}
+
+}
+
+
+/**
+ * Determine whether or not the specified control is being used.
+ *
+ * @param control The control
+ *
+ * @return True if the control is being used
+ */
+bool Controls::getState (int control) {
+
+	return controlstates[control].state;
+
+}
+
+
+/**
+ * If it's being used, release the specified control.
+ *
+ * @param control The control
+ *
+ * @return True if the control was being used
+ */
+bool Controls::release (int control) {
+
+	if (!controlstates[control].state) return false;
+
+	controlstates[control].time = globalTicks + T_KEY;
+	controlstates[control].state = false;
+
+	return true;
+
+}
+
+
+/**
+ * Get the position of the cursor, and determine whether or not it's being used.
+ *
+ * @param x Is set to the x-coordinate of the cursor
+ * @param y Is set to the y-coordinate of the cursor
+ *
+ * @return True if the cursor was being used
+ */
+bool Controls::getCursor (int& x, int& y) {
+	int scaleFactor = video.getScaleFactor();
+
+	if (scaleFactor > MIN_SCALE) {
+		x = cursorX / scaleFactor;
+		y = cursorY / scaleFactor;
+	} else {
+		x = cursorX;
+		y = cursorY;
+	}
+
+	return cursorPressed || cursorReleased;
+
+}
+
+
+/**
+ * Determine whether or not the cursor has been released.
+ *
+ * @return True if the cursor has been released
+ */
+bool Controls::wasCursorReleased () {
+
+	if (cursorReleased) {
+
+		cursorReleased = false;
+
+		return true;
+
+	}
+
+	return false;
+
+}
+
+const char *Controls::getKeyName (int control) {
+	static char keyName[32];
+#if OJ_SDL3 || OJ_SDL2
+	const char *sdlName = SDL_GetKeyName(keys[control].key);
+#else
+	char *sdlName = SDL_GetKeyName(static_cast<SDLKey>(keys[control].key));
+#endif
+
+	strncpy(keyName, sdlName, sizeof(keyName));
+	keyName[sizeof(keyName) - 1] = '\0';
+	lowercaseString(keyName);
+
+	if(strlen(keyName) == 0)
+		strcpy(keyName, "key unknown");
+
+	return keyName;
+}
+
+const char *Controls::getButtonName (int control) {
+	static char buttonName[] = "button x";
+	buttonName[7] = '0' + buttons[control].button;
+
+	return buttonName;
+}
+
+const char *Controls::getAxisName (int control) {
+	static char axisName[] = "axis x";
+	axisName[5] = '0' + axes[control].axis;
+
+	return axisName;
+}
+
+const char *Controls::getHatName (int control) {
+	switch(hats[control].hat) {
+	case SDL_HAT_UP:
+		return "hat up";
+	case SDL_HAT_LEFT:
+		return "hat left";
+	case SDL_HAT_RIGHT:
+		return "hat right";
+	case SDL_HAT_DOWN:
+		return "hat down";
+	// TODO: what about diagonal hat movement?
+	default:
+		return "hat unknown";
+	}
+}
