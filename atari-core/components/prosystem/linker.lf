@@ -1,0 +1,14 @@
+# ProSystem's zeroed buffers (the MARIA surface 91 KB, the 32 KB Souper RAM)
+# go to the external RAM, except Memory.c's: the 64 KB address space and the
+# ROM flags (8 KB), which the 6502 uses at every access. With them in external
+# RAM the emulation ran at 41 frames a second of 60 (board, 2026-10-07).
+[scheme:prosystem_bss_external]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:prosystem]
+archive: libprosystem.a
+entries:
+    * (prosystem_bss_external)
+    Memory (default)

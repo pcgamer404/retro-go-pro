@@ -1,0 +1,9 @@
+# App-local overrides. Applied before components/retro-go/targets/*/sdkconfig,
+# which does not set any cache option, so these survive a clean reconfigure.
+#
+# The 68000 interpreter reads one byte per instruction from m68ki_cycles
+# (61 KB, flash) and a handler pointer from m68ki_instruction_jump_table
+# (245 KB, flash). Both are in DROM and are fetched through the data cache,
+# so a 32 KB data cache cannot hold the cycle table.
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_SIZE=0x10000
