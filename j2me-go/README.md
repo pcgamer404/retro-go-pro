@@ -78,7 +78,6 @@ files at version 52; the JAR is embedded in the app image.
 
 ```
 /sd/roms/jar/                              game JARs (subfolders are scanned)
-/sd/retro-go/nanojava/*.rms                RecordStore saves (hex-encoded names)
 /sd/retro-go/config/j2me/games/<game>.cfg  per-game settings
 ```
 
