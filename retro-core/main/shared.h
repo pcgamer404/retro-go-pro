@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <rg_system.h>
+#include "core_frameskip.h"
 
 #define AUDIO_SAMPLE_RATE   (32000)
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 50 + 1)
@@ -15,5 +16,4 @@ void nes_main();
 void pce_main();
 void sms_main();
 void gw_main();
-void lynx_main();
 void snes_main();

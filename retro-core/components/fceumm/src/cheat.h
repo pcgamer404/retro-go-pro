@@ -14,5 +14,6 @@ void FCEU_ApplyPeriodicCheats(void);
 void FCEU_PowerCheats(void);
 
 void FCEU_ResetCheats(void);
+void FCEU_CheatsReattach(void); /* re-hook active Game Genie codes after power/reset */
 
 #endif

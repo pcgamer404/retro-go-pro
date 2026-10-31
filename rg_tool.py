@@ -14,38 +14,17 @@ import zlib
 DEFAULT_TARGET = os.getenv("RG_TOOL_TARGET", "my-handheld")
 DEFAULT_BAUD = os.getenv("RG_TOOL_BAUD", "1152000")
 DEFAULT_PORT = os.getenv("RG_TOOL_PORT", "COM4")
-# DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher updater store retro-core snes-go gbsp gwenesis fmsx ngp-go mame-go oswan pico8 frodo stella celeste openlara prboom-go duke3d-go wolf4sdl quake-go rott cannonball classicube sm64-go oregontrail")
-DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher store retro-core snes-go gbsp gwenesis fmsx ngp-go pico8 oswan celeste openlara opentyrian")
+# DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher store retro-core sm64-go portslot")
+DEFAULT_APPS = os.getenv("RG_TOOL_APPS", "launcher store retro-core sm64-go")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 PROJECT_APPS = {
   # Project name  Type, SubType, Size
-  'updater':      [0, 0,  393216],
   'launcher':     [0, 16, 1048576],
   'retro-core':   [0, 16, 1572864],
   'store':        [0, 16, 655360],
-  'snes-go':      [0, 16, 2097152],
-  'gbsp':         [0, 16, 851968],
-  'gwenesis':     [0, 16, 1048576],
-  'fmsx':         [0, 16, 655360],
-  'mame-go':      [0, 16, 1835008],
-  'pico8':        [0, 16, 1048576],
-  'oswan':        [0, 16, 655360],
-  'duke3d-go':    [0, 16, 917504],
-  'quake-go':     [0, 16, 851968],
-  'celeste':      [0, 16, 524288],
-  'wolf4sdl':     [0, 16, 655360],
-  'openlara':     [0, 16, 1179648],
-  'cannonball':   [0, 16, 851968],
-  'classicube':   [0, 16, 851968],
-  'stella':       [0, 16, 1048576],
-  'prboom-go':    [0, 16, 851968],
-  'ngp-go':       [0, 16, 1572864],
   'sm64-go':      [0, 16, 12582912],
-  'rott':         [0, 16, 851968],
-  'frodo':        [0, 16, 655360],
-  'opentyrian':   [0, 16, 655360],
-  'oregontrail':  [0, 16, 655360],
+  'mk64-go':      [0, 16, 12582912],
   'portslot':     [0, 16, 2097152],
 }
 

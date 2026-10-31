@@ -8,6 +8,7 @@
 #include "rg_network.h"
 #include "rg_audio.h" // Added audio header
 #include "rg_gui.h"
+#include "rg_localization.h"
 #include "rom_store.h"
 
 void app_main(void)
@@ -23,8 +24,12 @@ void app_main(void)
     rg_network_init();
 
     if (rg_network_get_info().state != RG_NETWORK_CONNECTED) {
-        rg_gui_draw_message("Starting Wi-Fi...");
+        rg_gui_draw_message(_("Starting Wi-Fi..."));
         rg_display_force_redraw();
+
+        // The radio only auto-starts if Wi-Fi is enabled in settings; start it if it is off
+        if (rg_network_get_info().state == RG_NETWORK_DISCONNECTED)
+            rg_network_wifi_start();
         
         int timeout = 100;
         while (rg_network_get_info().state != RG_NETWORK_CONNECTED && timeout > 0) {
@@ -34,7 +39,7 @@ void app_main(void)
     }
 
     if (rg_network_get_info().state != RG_NETWORK_CONNECTED) {
-        rg_gui_alert("Network Error", "Could not connect to Wi-Fi.");
+        rg_gui_alert(_("Network Error"), _("Could not connect to Wi-Fi."));
         esp_restart(); 
     }
 

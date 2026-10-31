@@ -1,3 +1,0 @@
-Version       : V1.360
-SW Maker Name : ClassiCube team
-Game Title    : ClassiCube

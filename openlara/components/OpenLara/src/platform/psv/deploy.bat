@@ -1,1 +1,0 @@
-curl --ftp-method nocwd -T OpenLara.self ftp://192.168.1.39:1337/ux0:/app/OPENLARA1/eboot.bin

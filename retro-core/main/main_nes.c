@@ -203,6 +203,7 @@ static void options_handler(rg_gui_option_t *dest)
     *dest++ = (rg_gui_option_t){0, _("Overscan"),     "-", RG_DIALOG_FLAG_NORMAL, &overscan_update_cb};
     *dest++ = (rg_gui_option_t){0, _("Crop sides"),   "-", RG_DIALOG_FLAG_NORMAL, &autocrop_update_cb};
     *dest++ = (rg_gui_option_t){0, _("Sprite limit"), "-", RG_DIALOG_FLAG_NORMAL, &sprite_limit_cb};
+    *dest++ = (rg_gui_option_t){0, "Max frameskip", "-", RG_DIALOG_FLAG_NORMAL, &core_maxskip_update_cb};
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
@@ -321,10 +322,11 @@ void nofrendo_main(void)
 
         if (skipFrames == 0)
         {
+            const int wantSkip = core_frameskip(app);
             if (nsfPlayer)
                 skipFrames = 10, nsf_draw_overlay();
-            else if (app->frameskip > 0)
-                skipFrames = app->frameskip;
+            else if (wantSkip > 0)
+                skipFrames = wantSkip;
             else if (busy > app->frameTime + 1500) // Allow some jitter
                 skipFrames = 1; // (elapsed / frameTime)
             else if (drawFrame && slowFrame)

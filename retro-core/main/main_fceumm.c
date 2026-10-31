@@ -171,7 +171,9 @@ static bool save_state_handler(const char *filename)
 
 static bool load_state_handler(const char *filename)
 {
-    return FCEUSS_Load_Fs(filename);
+    bool ok = FCEUSS_Load_Fs(filename);
+    FCEU_CheatsReattach(); // make sure Game Genie read hooks are still installed
+    return ok;
 }
 
 static bool reset_handler(bool hard)
@@ -180,6 +182,8 @@ static bool reset_handler(bool hard)
         FCEUI_PowerNES();
     else
         FCEUI_ResetNES();
+    // PowerNES() resets every memory handler, which silently dropped the active Game Genie codes
+    FCEU_CheatsReattach();
     return true;
 }
 
@@ -239,6 +243,19 @@ static void load_cheats(void)
         free(path);
         return;
     }
+
+    // rg_storage_read_file() does not NUL-terminate: strtok() could run past the end of the buffer
+    char *text = malloc(size + 1);
+    if (!text)
+    {
+        free(buffer);
+        free(path);
+        return;
+    }
+    memcpy(text, buffer, size);
+    text[size] = 0;
+    free(buffer);
+    buffer = text;
 
     FCEU_ResetCheats();
 
@@ -539,6 +556,7 @@ static void options_handler(rg_gui_option_t *dest)
     *dest++ = (rg_gui_option_t){0, "Core", "-", RG_DIALOG_FLAG_SKIP, &nes_core_update_cb};
     *dest++ = (rg_gui_option_t){0, "Game Genie", ">", RG_DIALOG_FLAG_NORMAL, &cheat_menu_cb};
     *dest++ = (rg_gui_option_t){0, _("Palette"), "-", RG_DIALOG_FLAG_NORMAL, &palette_update_cb};
+    *dest++ = (rg_gui_option_t){0, "Max frameskip", "-", RG_DIALOG_FLAG_NORMAL, &core_maxskip_update_cb};
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
@@ -724,8 +742,9 @@ static void fceumm_main(void)
 
         if (skipFrames == 0)
         {
-            if (app->frameskip > 0)
-                skipFrames = app->frameskip;
+            const int wantSkip = core_frameskip(app);
+            if (wantSkip > 0)
+                skipFrames = wantSkip;
             else if (busy > app->frameTime + 1500)
                 skipFrames = 1;
             else if (drawFrame && slowFrame)

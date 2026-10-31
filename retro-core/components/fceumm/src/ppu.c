@@ -155,7 +155,7 @@ uint8 *MMC5BGVRAMADR(uint32 V) {
     return &MMC5BGVPage[(V) >> 10][(V)];
 }
 
-DECLFR(A2002) {
+IRAM_ATTR DECLFR(A2002) {
   uint8 ret;
 
   FCEUPPU_LineUpdate();
@@ -174,12 +174,12 @@ DECLFR(A2002) {
   return ret;
 }
 
-DECLFR(A200x) { /* Not correct for $2004 reads. */
+IRAM_ATTR DECLFR(A200x) { /* Not correct for $2004 reads. */
   FCEUPPU_LineUpdate();
   return PPUGenLatch;
 }
 
-DECLFR(A2007) {
+IRAM_ATTR DECLFR(A2007) {
   uint8 ret;
   uint32 tmp = RefreshAddr & 0x3FFF;
 
@@ -253,7 +253,7 @@ DECLFR(A2007) {
   return ret;
 }
 
-DECLFW(B2000) {
+IRAM_ATTR DECLFW(B2000) {
   FCEUPPU_LineUpdate();
   PPUGenLatch = V;
 
@@ -265,7 +265,7 @@ DECLFW(B2000) {
   TempAddr |= (V & 3) << 10;
 }
 
-DECLFW(B2001) {
+IRAM_ATTR DECLFW(B2001) {
   FCEUPPU_LineUpdate();
   PPUGenLatch = V;
   PPU[1] = V;
@@ -275,13 +275,13 @@ DECLFW(B2001) {
 
 DECLFW(B2002) { PPUGenLatch = V; }
 
-DECLFW(B2003) {
+IRAM_ATTR DECLFW(B2003) {
   PPUGenLatch = V;
   PPU[3] = V;
   PPUSPL = V & 0x7;
 }
 
-DECLFW(B2004) {
+IRAM_ATTR DECLFW(B2004) {
   PPUGenLatch = V;
   if (PPUSPL >= 8) {
     if (PPU[3] >= 8)
@@ -293,7 +293,7 @@ DECLFW(B2004) {
   PPUSPL++;
 }
 
-DECLFW(B2005) {
+IRAM_ATTR DECLFW(B2005) {
   uint32 tmp = TempAddr;
   FCEUPPU_LineUpdate();
   PPUGenLatch = V;
@@ -310,7 +310,7 @@ DECLFW(B2005) {
   vtoggle ^= 1;
 }
 
-DECLFW(B2006) {
+IRAM_ATTR DECLFW(B2006) {
   FCEUPPU_LineUpdate();
 
   PPUGenLatch = V;
@@ -328,7 +328,7 @@ DECLFW(B2006) {
   vtoggle ^= 1;
 }
 
-DECLFW(B2007) {
+IRAM_ATTR DECLFW(B2007) {
   uint32 tmp = RefreshAddr & 0x3FFF;
   PPUGenLatch = V;
   if (tmp < 0x2000) {
@@ -354,7 +354,7 @@ DECLFW(B2007) {
     PPU_hook(RefreshAddr & 0x3fff);
 }
 
-DECLFW(B4014) {
+IRAM_ATTR DECLFW(B4014) {
   uint32 t = V << 8;
   int x;
 

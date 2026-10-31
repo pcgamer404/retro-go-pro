@@ -248,6 +248,37 @@ static const rominfo_t game_list[GAME_DATABASE_CNT] =
 
 };
 
+/* Size of the ROM image as loaded (before padding), used to mirror small SG-1000 cartridges */
+static int rom_raw_size = 0;
+
+/* SG-1000 / SC-3000 map the cartridge over $0000-$7FFF without decoding the upper address lines:
+   8K/16K ROMs are mirrored through the whole 32K window. The loader only pads to 16K, so a
+   16K-or-smaller game used to read past its buffer (garbage) for the upper half. */
+static void sg1000_mirror_rom(void)
+{
+  int raw = (rom_raw_size > 0 && rom_raw_size <= cart.size) ? rom_raw_size : cart.size;
+  int p = 0x400;
+  uint8 *m;
+
+  if (cart.size >= 0x8000)
+    return;
+
+  while (p < raw && p < 0x8000)
+    p <<= 1;
+  if (p > cart.size)
+    p = cart.size;
+
+  if (!(m = malloc(0x8000)))
+    return;
+
+  for (int i = 0; i < 0x8000; i += p)
+    memcpy(m + i, cart.rom, p);
+
+  cart.rom = m;   /* the original buffer stays owned by the caller */
+  cart.size = 0x8000;
+  cart.pages = 2;
+}
+
 void set_rom_config(void)
 {
   cart.pages = cart.size / 0x4000;
@@ -339,6 +370,7 @@ void set_rom_config(void)
   {
     sms.console = CONSOLE_SG1000;
     cart.mapper = MAPPER_NONE;
+    sg1000_mirror_rom();
   }
   else if (option.console == 6)
   {
@@ -372,6 +404,7 @@ int load_rom(void *data, int size, int crc_size)
 
   cart.rom = data;
   cart.size = size;
+  rom_raw_size = crc_size ?: size;
   cart.sram = calloc(1, 0x8000);
   if (!cart.sram) abort();
   cart.crc = crc32_le(0, cart.rom, crc_size ?: size);

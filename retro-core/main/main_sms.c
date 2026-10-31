@@ -390,6 +390,7 @@ static void options_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("Cheat Codes (GG/AR)"), ">", RG_DIALOG_FLAG_NORMAL, &handle_cheat_menu_cb};
     *dest++ = (rg_gui_option_t){0, _("Palette"), "-", RG_DIALOG_FLAG_NORMAL, &palette_update_cb};
+    *dest++ = CORE_MAXSKIP_OPTION;
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
@@ -416,7 +417,9 @@ void sms_main(void)
     option.extra_gg = 0;
     option.tms_pal = rg_settings_get_number(NS_APP, SETTING_PALETTE, 0);
 
-    if (rg_extension_match(app->romPath, "sg"))
+    // SG-1000: by launcher tab (also covers .zip ROMs, whose extension says nothing) or by file extension
+    if (strcmp(app->configNs, "sg1") == 0 || strcmp(app->configNs, "sg") == 0 ||
+        strcmp(app->configNs, "sg1000") == 0 || rg_extension_match(app->romPath, "sg"))
         option.console = 5;
     else if (strcmp(app->configNs, "col") == 0)
         option.console = 6;
@@ -526,6 +529,18 @@ void sms_main(void)
             if (joystick & RG_KEY_START)  input.system |= INPUT_START;
             if (joystick & RG_KEY_SELECT) input.system |= INPUT_PAUSE;
         }
+        else if (sms.console == CONSOLE_SG1000 || sms.console == CONSOLE_SC3000 || sms.console == CONSOLE_SF7000)
+        {
+            // SG-1000 has no START button: games use the console's PAUSE (NMI) as "start".
+            // It used to fall into the ColecoVision branch below (keypad prompt + muted audio).
+            if (joystick & RG_KEY_START)  input.system |= INPUT_PAUSE;
+            if (joystick & RG_KEY_SELECT)
+            {
+                rg_task_delay(100);
+                system_reset();
+                continue;
+            }
+        }
         else // Coleco
         {
             coleco.keypad[0] = 0xff;
@@ -604,8 +619,8 @@ void sms_main(void)
         if (skipFrames == 0)
         {
             int elapsed = rg_system_timer() - startTime;
-            if (app->frameskip > 0)
-                skipFrames = app->frameskip;
+            if (core_frameskip(app) > 0)
+                skipFrames = core_frameskip(app);
             else if (elapsed > app->frameTime + 1500) // Allow some jitter
                 skipFrames = 1; // (elapsed / frameTime)
             else if (drawFrame && slowFrame)

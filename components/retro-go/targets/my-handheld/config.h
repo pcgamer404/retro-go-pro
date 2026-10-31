@@ -1,9 +1,6 @@
 // Target definition
 #define RG_TARGET_NAME             "MY-HANDHELD"
 
-// ROM Store
-#define RG_STORE_BASE_URL "https://your-store-url.example.com/"
-
 // Storage
 #define RG_STORAGE_ROOT             "/sd"
 #define RG_STORAGE_SDSPI_HOST       SPI2_HOST
@@ -13,8 +10,8 @@
 // #define RG_STORAGE_FLASH_PARTITION  "vfs"
 
 // Audio
-#define RG_AUDIO_USE_INT_DAC        0   // 0 = Disable, 1 = GPIO25, 2 = GPIO26, 3 = Both
-#define RG_AUDIO_USE_EXT_DAC        0   // 0 = Disable, 1 = Enable
+#define RG_AUDIO_USE_INT_DAC        0   // ESP32-S3 has no built-in DAC; keep disabled
+#define RG_AUDIO_USE_EXT_DAC        0   // Enable only after assigning valid, unused I2S pins below
 #define RG_AUDIO_USE_USB            1   // USB audio dongle on the native USB (OTG) port, see drivers/audio/usb.c
 
 // Video
@@ -96,8 +93,11 @@
 #define RG_GPIO_SDSPI_CLK           GPIO_NUM_12
 #define RG_GPIO_SDSPI_CS            GPIO_NUM_18
 
-// External I2S DAC
-// #define RG_GPIO_SND_I2S_BCK         41
-// #define RG_GPIO_SND_I2S_WS          42
-// #define RG_GPIO_SND_I2S_DATA        40
-// #define RG_GPIO_SND_AMP_ENABLE      18
+// External I2S speaker amp/DAC (for example, MAX98357A). Not enabled in this build.
+// Before setting RG_AUDIO_USE_EXT_DAC to 1, assign real pins and ensure they do not
+// conflict with the gamepad or display. In particular GPIO40 is currently RG_KEY_B,
+// so do NOT use the old example RG_GPIO_SND_I2S_DATA=40 mapping.
+// #define RG_GPIO_SND_I2S_BCK         <unused GPIO>
+// #define RG_GPIO_SND_I2S_WS          <unused GPIO>
+// #define RG_GPIO_SND_I2S_DATA        <unused GPIO>
+// #define RG_GPIO_SND_AMP_ENABLE      <optional amp-enable GPIO>

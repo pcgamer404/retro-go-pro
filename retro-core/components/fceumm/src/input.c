@@ -1,4 +1,5 @@
 #ifdef TARGET_GNW
+#include <esp_attr.h>
 #include "build/config.h"
 #endif
 
@@ -79,7 +80,7 @@ static INPUTCFC *FCExp = 0;
 
 void (*InputScanlineHook)(uint8 *bg, uint8 *spr, uint32 linets, int final);
 
-DECLFR(JPRead)
+IRAM_ATTR DECLFR(JPRead)
 {
 	uint8 ret = 0;
 
@@ -95,7 +96,7 @@ DECLFR(JPRead)
 	return(ret);
 }
 
-DECLFW(B4016)
+IRAM_ATTR DECLFW(B4016)
 {
 	if (FCExp)
 		if (FCExp->Write)

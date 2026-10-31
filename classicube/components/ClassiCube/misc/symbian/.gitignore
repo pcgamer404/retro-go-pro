@@ -1,8 +1,0 @@
-ABLD.BAT
-*.sis
-!*.mmp
-!*.mmh
-!*.pkg
-!*.rss
-!*.svg
-!*.txt

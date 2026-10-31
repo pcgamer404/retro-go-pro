@@ -1,4 +1,5 @@
 #ifdef TARGET_GNW
+#include <esp_attr.h>
 #include "build/config.h"
 #endif
 
@@ -148,16 +149,16 @@ void SetupCartCHRMapping(int chip, uint8 *p, uint32 size, int ram) {
 	CHRram[chip] = ram;
 }
 
-DECLFR(CartBR) {
+IRAM_ATTR DECLFR(CartBR) {
 	return Page[A >> 11][A];
 }
 
-DECLFW(CartBW) {
+IRAM_ATTR DECLFW(CartBW) {
 	if (PRGIsRAM[A >> 11] && Page[A >> 11])
 		Page[A >> 11][A] = V;
 }
 
-DECLFR(CartBROB) {
+IRAM_ATTR DECLFR(CartBROB) {
 	if (!Page[A >> 11])
 		return(X.DB);
 	else

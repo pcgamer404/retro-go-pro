@@ -1,4 +1,5 @@
 #ifdef TARGET_GNW
+#include <esp_attr.h>
 #include "build/config.h"
 #endif
 
@@ -88,7 +89,7 @@ static struct CHEATF *cheats = 0, *cheatsl = 0;
 static uint16 *CheatComp = 0;
 static int savecheats;
 
-static DECLFR(SubCheatsRead) {
+static IRAM_ATTR DECLFR(SubCheatsRead) {
   CHEATF_SUBFAST *s = SubCheats;
   int x = numsubcheats;
 
@@ -107,6 +108,21 @@ static DECLFR(SubCheatsRead) {
     s++;
   } while (--x);
   return (0); /* We should never get here. */
+}
+
+/* PowerNES() (hard reset) and some mapper (re)initialisations reinstall every read handler, which
+   silently drops the Game Genie hooks while the cheats still show as "on". Put them back without
+   touching the cheat list. */
+void FCEU_CheatsReattach(void) {
+  int x;
+
+  for (x = 0; x < numsubcheats; x++) {
+    readfunc cur = GetReadHandler(SubCheats[x].addr);
+    if (cur != SubCheatsRead) {
+      SubCheats[x].PrevRead = cur;
+      SetReadHandler(SubCheats[x].addr, SubCheats[x].addr, SubCheatsRead);
+    }
+  }
 }
 
 void RebuildSubCheats(void) {

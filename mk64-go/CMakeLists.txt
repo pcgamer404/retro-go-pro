@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.5)
+set(COMPONENTS "main retro-go mk64-go")
+set(RG_ENABLE_NETWORKING 0)
+# Keep the flash asset store config when sdkconfig is regenerated.
+set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+if(DEFINED ENV{SDKCONFIG_DEFAULTS} AND NOT "$ENV{SDKCONFIG_DEFAULTS}" STREQUAL "")
+    list(APPEND SDKCONFIG_DEFAULTS "$ENV{SDKCONFIG_DEFAULTS}")
+endif()
+include(../base.cmake)
+project(mk64-go)

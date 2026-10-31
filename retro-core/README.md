@@ -9,8 +9,9 @@ ROM's system. Built on top of `retro-go` (display, input, audio, storage, GUI).
 | Famicom Disk System | FCEUmm | Needs `fds_bios.bin` in the BIOS folder |
 | Game Boy / Game Boy Color | gnuboy | RTC config, BIOS option, SRAM autosave, palettes |
 | PC Engine / TurboGrafx-16 | pce-go | Overscan option |
-| Master System / Game Gear / ColecoVision | smsplus | Game Genie / Action Replay cheats |
-| Atari Lynx | handy | Rotation: auto / left / right |
+| Master System / Game Gear / ColecoVision | smsplus | Game Genie / Action Replay cheats (SMS/GG/Coleco) |
+| Sega SG-1000 / SC-3000 | smsplus | START = console PAUSE, SELECT = reset |
+| Super Nintendo / Super Famicom | snes9x | 4 key presets, APU on/off, transparency, core-1 audio mixing |
 | Game & Watch | gw-emulator (LCD-Game-Emulator) | |
 
 ## NES: choosing the core
@@ -25,6 +26,25 @@ ROM's system. Built on top of `retro-go` (display, input, audio, storage, GUI).
 | Accuracy / mapper coverage | Higher | Good |
 | Speed | Good | Fastest |
 | FDS | Yes | No |
+
+## SG-1000 (new / fixed)
+- Launcher tab id: `sg1` (also accepted: `sg`, `sg1000`). Works with `.sg` files and zips.
+- The console is chosen from the launcher tab, so **zipped** SG-1000 ROMs now work (before, only a `.sg` file extension worked).
+- START = the console's PAUSE button (most games use it as "start"); SELECT = reset. Before, START opened the ColecoVision keypad prompt.
+- 8K / 16K ROMs are mirrored through the 32K cartridge window like on real hardware.
+
+## SNES
+- Launcher tab id: `snes` (or `sfc`). Needs PSRAM; heavy games may need frame skip.
+- Options: Controls (Native = all 12 buttons 1:1, or the Odroid-style Type A/B/C presets), APU emulation, Transparency.
+- Build with `SNES_PROF=1` to get timing counters in the log (the on-screen HUD of the original is not in this retro-go).
+
+## NES: frameskip cap and Game Genie
+- **Max frameskip** (Options menu of every retro-core / atari-core emulator, default 2, saved per system). retro-go's auto-frameskip can raise the skip to 5 (1 frame drawn out of 6) when the emulator
+  dips below 96% speed. The cap is applied inside the NES cores, so `rg_system.c` is untouched. `0` = never skip except when a frame is already late. The speed
+  option (fast-forward) is not capped.
+- Game Genie codes (FCEUmm) used to stop working after a **hard reset** (the core reinstalled its memory handlers and dropped the hooks while the codes still showed "on").
+  They are re-hooked after hard reset and after loading a state. Cheat files are also parsed safely now (the file buffer was not NUL-terminated).
+- A few hot memory handlers (RAM, cart read/write, PPU registers, controller, cheat read) moved to IRAM.
 
 ## Controls (all cores)
 - **MENU** (tap): game menu (save / load / reset / quit). **OPTION**: options menu.
@@ -43,5 +63,7 @@ Frame skip is automatic and only kicks in when the game cannot hold full speed. 
 Works with the USB DAC dongle (USB-C OTG port) and other retro-go sinks. The dongle's clock paces emulation.
 
 ## Credits
-FCEUmm, Nofrendo, gnuboy, pce-go, smsplus, handy, LCD-Game-Emulator and their authors; retro-go by ducalex;
+FCEUmm, Nofrendo, gnuboy, pce-go, smsplus, snes9x (via pjcau/retro-go-esp32-emu-turbo), LCD-Game-Emulator and their authors; retro-go by ducalex;
 fork by DynaMight1124.
+
+Lynx moved to **atari-core**. See `../MIGRATION.md` for the full layout.

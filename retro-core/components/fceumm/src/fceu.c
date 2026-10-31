@@ -1,4 +1,5 @@
 #ifdef TARGET_GNW
+#include <esp_attr.h>
 #include "build/config.h"
 #include "build/mappers.h"
 #endif
@@ -124,17 +125,17 @@ unsigned extrascanlines = 0;
 unsigned totalscanlines = 240;
 unsigned DMC_7bit = 0;
 
-static DECLFW(BNull) {}
+static IRAM_ATTR DECLFW(BNull) {}
 
-static DECLFR(ANull) { return (X.DB); }
+static IRAM_ATTR DECLFR(ANull) { return (X.DB); }
 
-static DECLFW(BRAML) { RAM[A] = V; }
+static IRAM_ATTR DECLFW(BRAML) { RAM[A] = V; }
 
-static DECLFR(ARAML) { return RAM[A]; }
+static IRAM_ATTR DECLFR(ARAML) { return RAM[A]; }
 
-static DECLFW(BRAMH) { RAM[A & 0x7FF] = V; }
+static IRAM_ATTR DECLFW(BRAMH) { RAM[A & 0x7FF] = V; }
 
-static DECLFR(ARAMH) { return RAM[A & 0x7FF]; }
+static IRAM_ATTR DECLFR(ARAMH) { return RAM[A & 0x7FF]; }
 
 #ifndef FCEU_LOW_RAM
 void FCEU_AllocMemoryTables(void) {

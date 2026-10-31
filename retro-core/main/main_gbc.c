@@ -247,6 +247,7 @@ static void options_handler(rg_gui_option_t *dest)
     *dest++ = (rg_gui_option_t){0, _("RTC config"),    "-", RG_DIALOG_FLAG_NORMAL, &rtc_update_cb};
     *dest++ = (rg_gui_option_t){0, _("SRAM autosave"), "-", RG_DIALOG_FLAG_NORMAL, &sram_autosave_cb};
     *dest++ = (rg_gui_option_t){0, _("Enable BIOS"),   "-", RG_DIALOG_FLAG_NORMAL, &enable_bios_cb};
+    *dest++ = CORE_MAXSKIP_OPTION;
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
@@ -262,6 +263,7 @@ void gbc_main(void)
     };
 
     app = rg_system_reinit(AUDIO_SAMPLE_RATE, &handlers, NULL);
+    app->frameskip = 0; // default is 1 = every other frame skipped; auto-frameskip raises it only when needed
 
     bool d565be = rg_display_get_info()->screen.format == RG_PIXEL_565_BE;
 
@@ -390,8 +392,8 @@ void gbc_main(void)
         if (skipFrames == 0)
         {
             int elapsed = rg_system_timer() - startTime;
-            if (app->frameskip > 0)
-                skipFrames = app->frameskip;
+            if (core_frameskip(app) > 0)
+                skipFrames = core_frameskip(app);
             else if (elapsed > app->frameTime + 1500) // Allow some jitter
                 skipFrames = 1; // (elapsed / frameTime)
             else if (drawFrame && slowFrame)

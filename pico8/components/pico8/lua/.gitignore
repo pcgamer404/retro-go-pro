@@ -1,6 +1,0 @@
-*.o
-*.a
-lua
-luac
-z8lua
-myoutput

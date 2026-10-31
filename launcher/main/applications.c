@@ -732,40 +732,21 @@ void applications_init(void) {
   application("Nintendo Entertainment System", "nes", "nes fc zip", "retro-core", 16);
   application("Nintendo Gameboy", "gb", "gb gbc zip", "retro-core", 0);
   application("Nintendo Gameboy Color", "gbc", "gbc gb zip", "retro-core", 0);
-  application("Nintendo Gameboy Advance", "gba", "gba zip", "gbsp", 0);
+  // application("Nintendo Gameboy Advance", "gba", "gba zip", "gbsp", 0);
   application("Nintendo Game & Watch", "gw", "gw", "retro-core", 0);
-  application("Super Nintendo", "snes", "smc sfc zip", "snes-go", 0);
   application("Sega Game Gear", "gg", "gg zip", "retro-core", 0);
   application("Sega Master System", "sms", "sms sg zip", "retro-core", 0);
-  application("Sega Mega Drive", "md", "md gen bin zip", "gwenesis", 0);
   // application("Sega SG-1000", "sg1", "sms sg sg1", "retro-core", 0);
-  application("Neo Geo Pocket", "ngp", "ngp ngc zip", "ngp-go", 0);
-  application("Pico-8", "pico8", "p8 png zip", "pico8", 0);
-  application("Atari Lynx", "lnx", "lnx zip", "retro-core", 64);
-  application("Atari 2600", "a26", "a26 zip", "stella", 0);
-  application("WonderSwan", "ws", "ws wsc zip", "oswan", 0);
-  application("Coleco ColecoVision", "col", "col rom zip", "retro-core", 0);
-  application("MSX", "msx", "rom mx1 mx2 dsk", "fmsx", 0);
-  application("NEC PC Engine", "pce", "pce zip", "retro-core", 0);
-  application("DOOM", "doom", "wad zip", "prboom-go", 0);
-  application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
-  application("Wolfenstein 3D", "wolf3d", "w3d wl6 wl1 sod zip", "wolf4sdl", 0);
-  application("Duke Nukem 3D", "duke3d", "grp zip", "duke3d-go", 0);
-  application("Quake", "quake", "quake pak", "quake-go", 0);
-  application("Rise of the Triad", "rott", "wad zip", "rott", 0);
-  application("Celeste", "celeste", "p8", "celeste", 0);
-  application("Outrun", "cannonball", "ball", "cannonball", 0);
-  application("Tomb Raider", "openlara", "tr1", "openlara", 0);
-  application("ClassiCube", "classicube", "cw zip", "classicube", 0);
+  // application("Neo Geo Pocket", "ngp", "ngp ngc zip", "ngp-go", 0);
+  // application("Atari Lynx", "lnx", "lnx zip", "retro-core", 64);
+  // application("Coleco ColecoVision", "col", "col rom zip", "retro-core", 0);
+  // application("NEC PC Engine", "pce", "pce zip", "retro-core", 0);
   application("Super Mario 64", "sm64", "z64 zip", "sm64-go", 0);
-  application("Commodore 64", "c64", "crt zip prg d64 t64", "frodo", 0);
+  application("Mario Kart 64", "n64", "z64 zip", "mk64-go", 0);
   application("Store", "store", "none", "store", 0);
-  application("Open Tyrian", "opentyrian", "tyr cdt", "opentyrian", 0);
-  application("Oregon Trail", "oregontrail", "trail", "oregontrail", 0);
 #if RG_ENABLE_PORTS
   application(RG_PORTS_TITLE, RG_PORTS_NAME, "bin", RG_PORTS_PARTITION, 0);
 #endif
-  // application("Commander Keen", "clonekeen", "keen ck1 ck2", "clonekeen", 0);
 
     // Special app to bootstrap native esp32 binaries from the SD card
     // application("Bootstrap", "apps", "bin elf", "bootstrap", 0);

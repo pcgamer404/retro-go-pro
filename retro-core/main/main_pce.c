@@ -113,6 +113,7 @@ static bool reset_handler(bool hard)
 static void options_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("Overscan"), "-", RG_DIALOG_FLAG_NORMAL, &overscan_update_cb};
+    *dest++ = CORE_MAXSKIP_OPTION;
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
@@ -176,7 +177,7 @@ void pce_main(void)
     }
 
     rg_system_set_tick_rate(60);
-    app->frameskip = 1;
+    app->frameskip = 0; // was 1: PCE always drew only every other frame; auto-frameskip raises it when needed
 
     int64_t lasttime = 0, prevtime = 0;
     emulationPaused = false;
@@ -223,8 +224,8 @@ void pce_main(void)
         // See if we need to skip a frame to keep up
         if (skipFrames == 0)
         {
-            if (app->frameskip > 0)
-                skipFrames = app->frameskip;
+            if (core_frameskip(app) > 0)
+                skipFrames = core_frameskip(app);
             else if (drawFrame && slowFrame)
                 skipFrames = 1;
         }
@@ -247,7 +248,9 @@ void pce_main(void)
         }
         else if (sleep < -(frameTime / 2))
         {
-            skipFrames++;
+            // We are late: skip, but never more than the frameskip ceiling (this used to grow without limit)
+            if (skipFrames < RG_MAX(core_maxskip, 1))
+                skipFrames++;
         }
 
         prevtime = rg_system_timer();
