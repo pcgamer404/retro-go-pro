@@ -1,0 +1,152 @@
+#ifndef __FMOPL_H_
+#define __FMOPL_H_
+
+#define BUILD_YM3812 (HAS_YM3812)
+#define BUILD_YM3526 (HAS_YM3526)
+#define BUILD_Y8950  (HAS_Y8950)
+
+/* compiler dependence */
+#include <stdint.h>
+
+#if BUILD_Y8950
+#include "ymdeltat.h"
+#endif
+
+typedef void (*OPL_TIMERHANDLER)(int channel,timer_tm interval_Sec);
+typedef void (*OPL_IRQHANDLER)(int param,int irq);
+typedef void (*OPL_UPDATEHANDLER)(int param,int min_interval_us);
+typedef void (*OPL_PORTHANDLER_W)(int param,unsigned char data);
+typedef unsigned char (*OPL_PORTHANDLER_R)(int param);
+
+/* !!!!! here is private section , do not access there member direct !!!!! */
+
+#define OPL_TYPE_WAVESEL   0x01  /* waveform select    */
+#define OPL_TYPE_ADPCM     0x02  /* DELTA-T ADPCM unit */
+#define OPL_TYPE_KEYBOARD  0x04  /* keyboard interface */
+#define OPL_TYPE_IO        0x08  /* I/O port */
+
+/* ---------- OPL one of slot  ---------- */
+typedef struct fm_opl_slot {
+	int32_t TL;		/* total level     :TL << 8            */
+	int32_t TLL;		/* adjusted now TL                     */
+	uint8_t  KSR;		/* key scale rate  :(shift down bit)   */
+	int32_t *AR;		/* attack rate     :&AR_TABLE[AR<<2]   */
+	int32_t *DR;		/* decay rate      :&DR_TALBE[DR<<2]   */
+	int32_t SL;		/* sustin level    :SL_TALBE[SL]       */
+	int32_t *RR;		/* release rate    :&DR_TABLE[RR<<2]   */
+	uint8_t ksl;		/* keyscale level  :(shift down bits)  */
+	uint8_t ksr;		/* key scale rate  :kcode>>KSR         */
+	uint32_t mul;		/* multiple        :ML_TABLE[ML]       */
+	uint32_t Cnt;		/* frequency count :                   */
+	uint32_t Incr;	/* frequency step  :                   */
+	/* envelope generator state */
+	uint8_t eg_typ;	/* envelope type flag                  */
+	uint8_t evm;		/* envelope phase                      */
+	int32_t evc;		/* envelope counter                    */
+	int32_t eve;		/* envelope counter end point          */
+	int32_t evs;		/* envelope counter step               */
+	int32_t evsa;	/* envelope step for AR :AR[ksr]       */
+	int32_t evsd;	/* envelope step for DR :DR[ksr]       */
+	int32_t evsr;	/* envelope step for RR :RR[ksr]       */
+	/* LFO */
+	uint8_t ams;		/* ams flag                            */
+	uint8_t vib;		/* vibrate flag                        */
+	/* wave selector */
+	int32_t **wavetable;
+}OPL_SLOT;
+
+/* ---------- OPL one of channel  ---------- */
+typedef struct fm_opl_channel {
+	OPL_SLOT SLOT[2];
+	uint8_t CON;			/* connection type                     */
+	uint8_t FB;			/* feed back       :(shift down bit)   */
+	int32_t *connect1;	/* slot1 output pointer                */
+	int32_t *connect2;	/* slot2 output pointer                */
+	int32_t op1_out[2];	/* slot1 output for selfeedback        */
+	/* phase generator state */
+	uint32_t  block_fnum;	/* block+fnum      :                   */
+	uint8_t kcode;		/* key code        : KeyScaleCode      */
+	uint32_t  fc;			/* Freq. Increment base                */
+	uint32_t  ksl_base;	/* KeyScaleLevel Base step             */
+	uint8_t keyon;		/* key on/off flag                     */
+} OPL_CH;
+
+/* OPL state */
+typedef struct fm_opl_f {
+	uint8_t type;			/* chip type                        */
+	int clock;			/* master clock  (Hz)                */
+	int rate;			/* sampling rate (Hz)                */
+	float freqbase;	/* frequency base                    */
+	timer_tm TimerBase;	/* Timer base time (==sampling time) */
+	uint8_t address;		/* address register                  */
+	uint8_t status;		/* status flag                       */
+	uint8_t statusmask;	/* status mask                       */
+	uint32_t mode;		/* Reg.08 : CSM , notesel,etc.       */
+	/* Timer */
+	int T[2];			/* timer counter       */
+	uint8_t st[2];		/* timer enable        */
+	/* FM channel slots */
+	OPL_CH *P_CH;		/* pointer of CH       */
+	int	max_ch;			/* maximum channel     */
+	/* Rythm sention */
+	uint8_t rythm;		/* Rythm mode , key flag */
+#if BUILD_Y8950
+	/* Delta-T ADPCM unit (Y8950) */
+	YM_DELTAT *deltat;			/* DELTA-T ADPCM       */
+#endif
+	/* Keyboard / I/O interface unit (Y8950) */
+	uint8_t portDirection;
+	uint8_t portLatch;
+	OPL_PORTHANDLER_R porthandler_r;
+	OPL_PORTHANDLER_W porthandler_w;
+	int port_param;
+	OPL_PORTHANDLER_R keyboardhandler_r;
+	OPL_PORTHANDLER_W keyboardhandler_w;
+	int keyboard_param;
+	/* time tables */
+	int32_t AR_TABLE[75];	/* atttack rate tables */
+	int32_t DR_TABLE[75];	/* decay rate tables   */
+	uint32_t FN_TABLE[1024];  /* fnumber -> increment counter */
+	/* LFO */
+	int32_t *ams_table;
+	int32_t *vib_table;
+	int32_t amsCnt;
+	int32_t amsIncr;
+	int32_t vibCnt;
+	int32_t vibIncr;
+	/* wave selector enable flag */
+	uint8_t wavesel;
+	/* external event callback handler */
+	OPL_TIMERHANDLER  TimerHandler;		/* TIMER handler   */
+	int TimerParam;						/* TIMER parameter */
+	OPL_IRQHANDLER    IRQHandler;		/* IRQ handler    */
+	int IRQParam;						/* IRQ parameter  */
+	OPL_UPDATEHANDLER UpdateHandler;	/* stream update handler   */
+	int UpdateParam;					/* stream update parameter */
+} FM_OPL;
+
+/* ---------- Generic interface section ---------- */
+#define OPL_TYPE_YM3526 (0)
+#define OPL_TYPE_YM3812 (OPL_TYPE_WAVESEL)
+#define OPL_TYPE_Y8950  (OPL_TYPE_ADPCM|OPL_TYPE_KEYBOARD|OPL_TYPE_IO)
+
+FM_OPL *OPLCreate(int type, int clock, int rate);
+void OPLDestroy(FM_OPL *OPL);
+void OPLSetTimerHandler(FM_OPL *OPL,OPL_TIMERHANDLER TimerHandler,int channelOffset);
+void OPLSetIRQHandler(FM_OPL *OPL,OPL_IRQHANDLER IRQHandler,int param);
+void OPLSetUpdateHandler(FM_OPL *OPL,OPL_UPDATEHANDLER UpdateHandler,int param);
+/* Y8950 port handlers */
+void OPLSetPortHandler(FM_OPL *OPL,OPL_PORTHANDLER_W PortHandler_w,OPL_PORTHANDLER_R PortHandler_r,int param);
+void OPLSetKeyboardHandler(FM_OPL *OPL,OPL_PORTHANDLER_W KeyboardHandler_w,OPL_PORTHANDLER_R KeyboardHandler_r,int param);
+
+void OPLResetChip(FM_OPL *OPL);
+int OPLWrite(FM_OPL *OPL,int a,int v);
+unsigned char OPLRead(FM_OPL *OPL,int a);
+int OPLTimerOver(FM_OPL *OPL,int c);
+
+/* YM3626/YM3812 local section */
+void YM3812UpdateOne(FM_OPL *OPL, int16_t *buffer, int length);
+
+void Y8950UpdateOne(FM_OPL *OPL, int16_t *buffer, int length);
+
+#endif
