@@ -76,7 +76,7 @@ An optional **USB DAC** audio output, aimed at the [ESP32-S3-DevKitC-1 v1.1](htt
 
 The DevKitC-1 has two USB-C ports (native USB and a USB-UART bridge), so check the [user guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html) for which one is which.
 
-![ESP32-S3-DevKitC-1 v1.1](docs/esp32-s3-devkitc-1-v1.1.png)
+<img width="1536" height="1024" alt="22222222" src="https://github.com/user-attachments/assets/d7569ea2-88fa-4729-b8eb-44b35440e268" />
 
 ### Minor Improvements
 
