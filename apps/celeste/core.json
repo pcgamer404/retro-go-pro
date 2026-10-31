@@ -1,0 +1,7 @@
+{
+  "id": "celeste",
+  "title": "Celeste",
+  "launch_mode": "rom",
+  "rom_extensions": ["p8"],
+  "rom_folder": "celeste"
+}

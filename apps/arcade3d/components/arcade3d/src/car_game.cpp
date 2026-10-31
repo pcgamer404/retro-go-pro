@@ -1,0 +1,158 @@
+/*
+  ═══════════════════════════════════════════════════════════════
+  ESP32 Pseudo-3D Racing Game — TFT_eSPI (Double Buffered)
+
+  ESTRUCTURA MODULAR:
+  - config.h       : Constantes y definiciones del hardware
+  - structs.h      : Estructuras de datos (Segment, RenderPt, TrafficCar)
+  - colors.cpp/h   : Gestión de colores y paletas
+  - utils.cpp/h    : Funciones utilitarias matemáticas
+  - track.cpp/h    : Generación de pista y tráfico
+  - rendering.cpp/h: Funciones de dibujo y renderizado
+  - physics.cpp/h  : Física del juego y colisiones
+  ═══════════════════════════════════════════════════════════════
+*/
+
+#include <SPI.h>
+#include <TFT_eSPI.h>
+
+#include "config.h"
+#include "structs.h"
+#include "colors.h"
+#include "utils.h"
+#include "track.h"
+#include "rendering.h"
+#include "physics.h"
+
+// ═══════════════════════════════════════════════════════════════
+//  VARIABLES DE CONTROL DE TIEMPO Y DÍA/NOCHE
+// ═══════════════════════════════════════════════════════════════
+int  timeOfDay = 0;            // 0=día, 1=atardecer, 2=noche
+long distSinceTimeChange = 0;
+
+// ═══════════════════════════════════════════════════════════════
+//  SETUP
+// ═══════════════════════════════════════════════════════════════
+void setup() {
+  Serial.begin(115200);
+
+  // Configurar pines de botones
+  pinMode(BTN_LEFT,  INPUT_PULLUP);
+  pinMode(BTN_RIGHT, INPUT_PULLUP);
+  randomSeed(analogRead(0));
+
+  // Configurar backlight de la pantalla
+  pinMode(TFT_BL, OUTPUT);
+  digitalWrite(TFT_BL, HIGH);
+
+  // Inicializar pantalla TFT
+  tft.begin();
+  tft.setRotation(1);
+  tft.fillScreen(TFT_BLACK);
+
+  // Crear sprite para double buffering en PSRAM (ahorra ~150KB RAM)
+  spr.setColorDepth(16);
+  spr.setAttribute(PSRAM_ENABLE, true); // Habilitar PSRAM antes de crear
+  if (spr.createSprite(SCR_W, SCR_H) == nullptr) {
+    Serial.println("ERROR: Fallo al crear spr principal!");
+  }
+
+  // Inicializar física
+  initPhysics();
+
+  // DEBUG DE PSRAM
+  Serial.print("Total PSRAM: "); Serial.println(ESP.getPsramSize());
+  Serial.print("Free PSRAM:  "); Serial.println(ESP.getFreePsram());
+
+  // Inicializar colores
+  initColors(timeOfDay);
+
+  // ¡NUEVO! Generar montañas parallax en PSRAM
+  initBackground();
+
+  // Construir pista
+  buildTrack();
+
+  // Inicializar tráfico
+  initTraffic(maxSpeed);
+
+  // Mostrar pantalla de inicio con carro rotando (3 segundos)
+  unsigned long startTime = millis();
+  while (millis() - startTime < 3000) {
+    float animTime = (millis() - startTime) * 0.001f; // Convertir a segundos
+    drawStartScreen(animTime);
+    delay(16); // ~60 FPS
+  }
+
+  lastFrameMs = millis();
+  distSinceTimeChange = 0;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MAIN LOOP
+// ═══════════════════════════════════════════════════════════════
+void loop() {
+  unsigned long now = millis();
+  float dt = (now - lastFrameMs) / 1000.0;
+  lastFrameMs = now;
+  if (dt > 0.05) dt = 0.05; // Limitar delta time (a long hitch must not teleport the car)
+
+  // Actualizar juego si no está crashed
+  if (!crashed) {
+    handleInput(dt);
+    updatePhysics(dt);
+    checkCollisions();
+
+    // --- MAGIA DEL PARALLAX ---
+    // El fondo se mueve según la curva y velocidad (efecto Horizon Chase)
+    int pSeg = findSegIdx(position + playerZdist);
+    float curveForce = segments[pSeg].curve;
+    // Factor 150.0 controla velocidad de rotación del fondo
+    skyOffset += curveForce * (speed / maxSpeed) * 150.0f * dt;
+  }
+
+  // Renderizar frame en el sprite (buffer)
+  // esp32-emu-turbo: where a frame goes, printed every 120 frames (console only)
+  static unsigned long profUs[5], profFrames;
+  int64_t t0 = a3d_micros();
+  drawSky(position, playerZdist, timeOfDay, skyOffset);
+  int64_t t1 = a3d_micros();
+  drawRoad(position, playerX, playerZdist, cameraDepth, timeOfDay);
+  int64_t t2 = a3d_micros();
+  drawPlayerCar();
+  int64_t t3 = a3d_micros();
+  drawHUD(speed, maxSpeed, currentLapTime, bestLapTime);
+  int64_t t4 = a3d_micros();
+  profUs[0] += t1 - t0; profUs[1] += t2 - t1; profUs[2] += t3 - t2; profUs[3] += t4 - t3;
+
+  // Mostrar mensaje de crash
+  if (crashed) {
+    drawCrashMessage();
+    if (millis() - crashTimer > 2000) {
+      crashed = false;
+      speed   = 0;
+      playerX = 0;
+    }
+  }
+
+  // Enviar el frame completo a la pantalla (double buffering)
+  {
+    int64_t t5 = a3d_micros();
+    spr.pushSprite(0, 0);
+    profUs[4] += a3d_micros() - t5;
+    if (++profFrames == 120) {
+      printf("A3DPROF ms/frame: sky %.2f road %.2f car %.2f hud %.2f present %.2f\n",
+             profUs[0] / 120000.0, profUs[1] / 120000.0, profUs[2] / 120000.0, profUs[3] / 120000.0, profUs[4] / 120000.0);
+      profFrames = 0;
+      profUs[0] = profUs[1] = profUs[2] = profUs[3] = profUs[4] = 0;
+    }
+  }
+
+  // Cambiar hora del día según distancia recorrida
+  distSinceTimeChange += (int)(speed * dt);
+  if (distSinceTimeChange > 180000) {
+    distSinceTimeChange = 0;
+    timeOfDay = (timeOfDay + 1) % 3;
+    initColors(timeOfDay);
+  }
+}

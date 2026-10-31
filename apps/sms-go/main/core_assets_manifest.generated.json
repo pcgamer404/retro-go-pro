@@ -1,0 +1,20 @@
+{
+  "schema": 2,
+  "id": "sms-go",
+  "title": "Sega Master System / Game Gear",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "col",
+    "gg",
+    "sg",
+    "sms",
+    "zip"
+  ],
+  "rom_folder": "sms",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

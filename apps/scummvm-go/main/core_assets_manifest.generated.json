@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "scummvm-go",
+  "title": "ScummVM",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "zip"
+  ],
+  "rom_folder": "scummvm",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "id": "a26-go",
+  "title": "Atari 2600",
+  "launch_mode": "rom",
+  "rom_extensions": ["a26", "zip"],
+  "rom_folder": "a26"
+}

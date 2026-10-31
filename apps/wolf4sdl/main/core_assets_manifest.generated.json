@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "wolf4sdl",
+  "title": "Wolfenstein 3D",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "wl6"
+  ],
+  "rom_folder": "wolf3d",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "id": "celeste",
+  "title": "Celeste",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "p8"
+  ],
+  "rom_folder": "celeste",
+  "art": []
+}

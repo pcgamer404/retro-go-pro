@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "openjazz",
+  "title": "Jazz Jackrabbit",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "jazz"
+  ],
+  "rom_folder": "openjazz",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

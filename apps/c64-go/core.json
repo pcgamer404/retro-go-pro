@@ -1,0 +1,7 @@
+{
+  "id": "c64-go",
+  "title": "Commodore 64",
+  "launch_mode": "rom",
+  "rom_extensions": ["c64", "zip"],
+  "rom_folder": "c64"
+}

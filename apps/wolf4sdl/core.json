@@ -1,0 +1,7 @@
+{
+  "id": "wolf4sdl",
+  "title": "Wolfenstein 3D",
+  "launch_mode": "rom",
+  "rom_extensions": ["wl6"],
+  "rom_folder": "wolf3d"
+}

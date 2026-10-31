@@ -1,0 +1,17 @@
+{
+  "schema": 2,
+  "id": "c64-go",
+  "title": "Commodore 64",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "c64",
+    "zip"
+  ],
+  "rom_folder": "c64",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

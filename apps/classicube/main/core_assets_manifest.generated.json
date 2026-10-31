@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "classicube",
+  "title": "Classic Cube",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "cw"
+  ],
+  "rom_folder": "classicube",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

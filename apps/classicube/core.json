@@ -1,0 +1,7 @@
+{
+  "id": "classicube",
+  "title": "Classic Cube",
+  "launch_mode": "rom",
+  "rom_extensions": ["cw"],
+  "rom_folder": "classicube"
+}

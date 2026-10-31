@@ -1,0 +1,14 @@
+{
+  "schema": 2,
+  "id": "quake2-go",
+  "title": "Quake II",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "pak"
+  ],
+  "rom_folder": "quake2",
+  "art": [
+    "banner.png"
+  ]
+}

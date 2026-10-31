@@ -1,0 +1,17 @@
+{
+  "schema": 2,
+  "id": "pico8",
+  "title": "Pico 8",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "p8",
+    "pbg"
+  ],
+  "rom_folder": "pico8",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

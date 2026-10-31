@@ -1,0 +1,7 @@
+{
+  "id": "openjazz",
+  "title": "Jazz Jackrabbit",
+  "launch_mode": "rom",
+  "rom_extensions": ["jazz"],
+  "rom_folder": "openjazz"
+}

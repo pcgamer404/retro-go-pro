@@ -1,0 +1,7 @@
+{
+  "id": "snes-go",
+  "title": "Super Nintendo",
+  "launch_mode": "rom",
+  "rom_extensions": ["smc", "snes", "sfc", "zip"],
+  "rom_folder": "snes"
+}

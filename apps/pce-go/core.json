@@ -1,0 +1,7 @@
+{
+  "id": "pce-go",
+  "title": "PC Engine / TurboGrafx-16",
+  "launch_mode": "rom",
+  "rom_extensions": ["pce", "zip"],
+  "rom_folder": "pce"
+}

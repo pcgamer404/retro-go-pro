@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "duke3d-go",
+  "title": "Duke Nuke 3D",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "grp"
+  ],
+  "rom_folder": "duke3d",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

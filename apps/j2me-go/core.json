@@ -1,0 +1,7 @@
+{
+  "id": "j2me-go",
+  "title": "J2ME",
+  "launch_mode": "rom",
+  "rom_extensions": ["jar", "zip"],
+  "rom_folder": "jar"
+}

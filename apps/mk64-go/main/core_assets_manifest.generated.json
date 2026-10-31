@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "mk64-go",
+  "title": "Mario Kart 64",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "z64"
+  ],
+  "rom_folder": "n64",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

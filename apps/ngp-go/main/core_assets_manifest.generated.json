@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "ngp-go",
+  "title": "Neo Geo Pocket",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "ngc"
+  ],
+  "rom_folder": "ngp",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

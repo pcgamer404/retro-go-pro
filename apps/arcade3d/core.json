@@ -1,0 +1,7 @@
+{
+  "id": "arcade3d",
+  "title": "Arcade 3D",
+  "launch_mode": "rom",
+  "rom_extensions": ["run"],
+  "rom_folder": "arcade3d"
+}

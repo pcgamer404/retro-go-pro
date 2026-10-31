@@ -1,0 +1,7 @@
+{
+  "id": "a52-go",
+  "title": "Atari 5200",
+  "launch_mode": "rom",
+  "rom_extensions": ["a52", "zip"],
+  "rom_folder": "a52"
+}

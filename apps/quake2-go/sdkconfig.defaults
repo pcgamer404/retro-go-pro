@@ -1,0 +1,21 @@
+# Quake II specific build settings. Merged after the target's sdkconfig
+# (components/retro-go/targets/<target>/sdkconfig) at configure time.
+#
+# The renderer is ~110 KB of XIP flash code, so the caches matter more than any
+# cvar: 32 KB instruction cache (was 16) and 64 KB data cache with 64 byte lines
+# (was 32 KB / 32 byte). -O2 instead of -Os costs ~50 KB of image.
+CONFIG_COMPILER_OPTIMIZATION_DEFAULT=n
+CONFIG_COMPILER_OPTIMIZATION_SIZE=n
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+CONFIG_ESP32S3_INSTRUCTION_CACHE_16KB=n
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_SIZE=0x8000
+
+CONFIG_ESP32S3_DATA_CACHE_16KB=n
+CONFIG_ESP32S3_DATA_CACHE_32KB=n
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_SIZE=0x10000
+CONFIG_ESP32S3_DATA_CACHE_LINE_32B=n
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE=64

@@ -1,0 +1,7 @@
+{
+  "id": "msx-go",
+  "title": "MSX",
+  "launch_mode": "rom",
+  "rom_extensions": ["rom"],
+  "rom_folder": "msx"
+}

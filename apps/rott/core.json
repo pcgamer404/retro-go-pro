@@ -1,0 +1,7 @@
+{
+  "id": "rott",
+  "title": "Rise of the Triad",
+  "launch_mode": "rom",
+  "rom_extensions": ["wad", "game", "zip"],
+  "rom_folder": "rott"
+}

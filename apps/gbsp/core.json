@@ -1,0 +1,7 @@
+{
+  "id": "gbsp",
+  "title": "Gameboy Advance",
+  "launch_mode": "rom",
+  "rom_extensions": ["gba", "zip"],
+  "rom_folder": "gba"
+}

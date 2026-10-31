@@ -1,0 +1,3 @@
+# The asset store lives in the tail of this app's own OTA partition.
+# IDF's default (ABORTS) refuses to erase/write inside the running app.
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y

@@ -1,0 +1,7 @@
+{
+  "id": "a78-go",
+  "title": "Atari 7800",
+  "launch_mode": "rom",
+  "rom_extensions": ["a78", "zip"],
+  "rom_folder": "a78"
+}

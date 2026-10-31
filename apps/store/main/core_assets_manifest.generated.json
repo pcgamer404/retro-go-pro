@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "store",
+  "title": "Store",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "none"
+  ],
+  "rom_folder": "store",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

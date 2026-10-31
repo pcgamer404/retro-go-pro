@@ -1,0 +1,17 @@
+{
+  "schema": 2,
+  "id": "a26-go",
+  "title": "Atari 2600",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "a26",
+    "zip"
+  ],
+  "rom_folder": "a26",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

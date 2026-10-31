@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "oregontrail",
+  "title": "Oregon Trail",
+  "version": "",
+  "launch_mode": "direct",
+  "rom_extensions": [
+    "trail"
+  ],
+  "rom_folder": "oregontrail",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

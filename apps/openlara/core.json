@@ -1,0 +1,7 @@
+{
+  "id": "openlara",
+  "title": "Tomb Raider",
+  "launch_mode": "rom",
+  "rom_extensions": ["tr1"],
+  "rom_folder": "openlara"
+}

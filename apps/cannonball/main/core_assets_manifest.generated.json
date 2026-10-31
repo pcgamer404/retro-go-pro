@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "cannonball",
+  "title": "OutRun",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "ball"
+  ],
+  "rom_folder": "cannonball",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

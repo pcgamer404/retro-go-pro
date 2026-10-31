@@ -1,0 +1,7 @@
+{
+  "id": "gw-go",
+  "title": "Game & Watch",
+  "launch_mode": "rom",
+  "rom_extensions": ["gw"],
+  "rom_folder": "gw"
+}

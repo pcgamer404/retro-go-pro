@@ -1,0 +1,634 @@
+#include "shared.h"
+
+#include <smsplus.h>
+
+// #define AUDIO_SAMPLE_RATE   (32000)
+// #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 50 + 1)
+
+#if RG_SCREEN_PIXEL_FORMAT == 0
+#define FB_PIXEL_FORMAT RG_PIXEL_PAL565_BE
+#else
+#define FB_PIXEL_FORMAT RG_PIXEL_PAL565_LE
+#endif
+
+static rg_app_t *app;
+static rg_surface_t *updates[2];
+static rg_surface_t *currentUpdate;
+
+const rg_keyboard_layout_t coleco_keyboard = {
+    .layout = "123" "456" "789" "*0#",
+    .columns = 3,
+    .rows = 4,
+};
+
+static const char *SETTING_PALETTE = "palette";
+// --- MAIN
+
+
+static void event_handler(int event, void *arg)
+{
+    if (event == RG_EVENT_REDRAW)
+    {
+        rg_display_submit(currentUpdate, 0);
+    }
+}
+
+static bool screenshot_handler(const char *filename, int width, int height)
+{
+	return rg_surface_save_image_file(currentUpdate, filename, width, height);
+}
+
+static bool save_state_handler(const char *filename)
+{
+    FILE* f = fopen(filename, "w");
+    if (f)
+    {
+        system_save_state(f);
+        fclose(f);
+        return true;
+    }
+    return false;
+}
+
+static bool load_state_handler(const char *filename)
+{
+    FILE* f = fopen(filename, "rb");
+    if (f)
+    {
+        system_load_state(f);
+        fclose(f);
+        return true;
+    }
+    system_reset();
+    return false;
+}
+
+static bool reset_handler(bool hard)
+{
+    system_reset();
+    return true;
+}
+
+static rg_gui_event_t palette_update_cb(rg_gui_option_t *opt, rg_gui_event_t event)
+{
+    int pal = option.tms_pal;
+    int max = 2;
+
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
+    {
+        if (event == RG_DIALOG_PREV)
+            pal = pal > 0 ? pal - 1 : max;
+        else
+            pal = pal < max ? pal + 1 : 0;
+
+        if (option.tms_pal != pal)
+        {
+            option.tms_pal = pal;
+            for (int i = 0; i < PALETTE_SIZE; i++)
+                palette_sync(i);
+            if (render_copy_palette(currentUpdate->palette))
+                memcpy(updates[currentUpdate == updates[0]]->palette, currentUpdate->palette, 512);
+            rg_settings_set_number(NS_APP, SETTING_PALETTE, pal);
+        }
+        return RG_DIALOG_REDRAW;
+    }
+
+    sprintf(opt->value, "%d/%d", pal + 1, max + 1);
+    return RG_DIALOG_VOID;
+}
+
+#include "sms_cheat.h"
+
+static void apply_cheat_code(const char *code, const char *name, bool status) {
+  uint32_t addr;
+  uint8_t val;
+  int comp = -1;
+
+  if (sms_cheat_decode_par(code, &addr, &val)) {
+    comp = -1; // PAR: no compare value
+  } else if (sms_cheat_decode_gg(code, &addr, &val, &comp)) {
+    // comp already set by decode_gg
+  } else {
+    RG_LOGE("Invalid cheat code: %s\n", code);
+    return;
+  }
+
+  // Use description format: "NAME|CODE"
+  char full_desc[128];
+  snprintf(full_desc, sizeof(full_desc), "%s|%s", name ? name : "Cheat", code);
+  sms_cheat_add(full_desc, addr, val, comp, status);
+}
+
+static void load_cheats(void) {
+  char *path = rg_emu_get_path(RG_PATH_SAVE_SRAM, app->romPath);
+  if (!path) return;
+
+  char *saves_str = strstr(path, "saves");
+  if (saves_str) memcpy(saves_str, "cheat", 5);
+
+  char *ext = strrchr(path, '.');
+  if (ext) strcpy(ext, ".cht");
+
+  void *buffer = NULL;
+  size_t size = 0;
+  if (!rg_storage_read_file(path, &buffer, &size, 0)) {
+    free(path);
+    return;
+  }
+
+  sms_cheat_reset();
+
+  char *line = strtok((char *)buffer, "\r\n");
+  while (line) {
+    char *sep1 = strchr(line, '|');
+    if (sep1) {
+      *sep1 = 0;
+      char *name = line;
+      char *code_part = sep1 + 1;
+      int status = 1;
+
+      char *sep2 = strchr(code_part, '|');
+      if (sep2) {
+        *sep2 = 0;
+        char *status_str = sep2 + 1;
+        if (strcmp(status_str, "OFF") == 0) status = 0;
+      }
+      apply_cheat_code(code_part, name, status);
+    }
+    line = strtok(NULL, "\r\n");
+  }
+
+  free(buffer);
+  free(path);
+}
+
+static void save_cheats(void) {
+  char *path = rg_emu_get_path(RG_PATH_SAVE_SRAM, app->romPath);
+  if (!path) return;
+
+  char *saves_str = strstr(path, "saves");
+  if (saves_str) memcpy(saves_str, "cheat", 5);
+
+  rg_storage_mkdir(rg_dirname(path));
+
+  char *ext = strrchr(path, '.');
+  if (ext) strcpy(ext, ".cht");
+
+  const size_t buffer_size = 16384;
+  char *buffer = malloc(buffer_size);
+  if (!buffer) {
+    free(path);
+    return;
+  }
+  buffer[0] = 0;
+  size_t offset = 0;
+
+  for (int i = 0; i < 64; i++) {
+    uint32_t a;
+    uint8_t v;
+    int c;
+    bool s;
+    char *full_name = NULL;
+    if (!sms_cheat_get(i, &full_name, &a, &v, &c, &s)) break;
+
+    if (full_name) {
+      int len = snprintf(buffer + offset, buffer_size - offset, "%s|%s\n", 
+                         full_name, s ? "ON" : "OFF");
+      if (len > 0 && offset + len < buffer_size) offset += len;
+      else break;
+    }
+  }
+
+  if (offset > 0) rg_storage_write_file(path, buffer, offset, 0);
+  else rg_storage_delete(path);
+
+  free(buffer);
+  free(path);
+}
+
+static int last_cheat_sel = 0;
+static rg_gui_event_t cheat_toggle_cb(rg_gui_option_t *opt, rg_gui_event_t event) {
+  if (!opt) return RG_DIALOG_VOID;
+
+  int index = (int)opt->arg;
+  uint32_t a;
+  uint8_t v;
+  int c;
+  bool s;
+  char *name = NULL;
+
+  if (event == RG_DIALOG_INIT || event == RG_DIALOG_UPDATE) {
+    if (opt->value && sms_cheat_get(index, &name, &a, &v, &c, &s)) {
+      strcpy(opt->value, s ? _("On") : _("Off"));
+    }
+    return RG_DIALOG_VOID;
+  }
+
+  if (event != RG_DIALOG_ENTER && event != RG_DIALOG_SELECT) return RG_DIALOG_VOID;
+
+  if (sms_cheat_get(index, &name, &a, &v, &c, &s)) {
+    sms_cheat_set(index, !s);
+    save_cheats();
+    return RG_DIALOG_UPDATE;
+  }
+  return RG_DIALOG_VOID;
+}
+
+static void handle_cheat_menu(void) {
+  static rg_gui_option_t choices[32];
+  static char choices_names[32][64];
+  static char choices_values[32][16];
+
+  while (true) {
+    int count = 0;
+    for (int i = 0; i < 30; i++) {
+      uint32_t a;
+      uint8_t v;
+      int c;
+      bool s;
+      char *full_name = NULL;
+      if (!sms_cheat_get(i, &full_name, &a, &v, &c, &s)) break;
+      if (!full_name) continue;
+
+      char *sep = strchr(full_name, '|');
+      if (sep) {
+        size_t len = RG_MIN(sep - full_name, 60);
+        strncpy(choices_names[count], full_name, len);
+        choices_names[count][len] = 0;
+      } else {
+        strncpy(choices_names[count], full_name, 63);
+        choices_names[count][63] = 0;
+      }
+
+      choices[count].flags = RG_DIALOG_FLAG_NORMAL;
+      choices[count].label = choices_names[count];
+      choices[count].value = choices_values[count];
+      choices[count].update_cb = cheat_toggle_cb;
+      choices[count].arg = (intptr_t)i;
+      count++;
+    }
+
+    if (count == 0) {
+      rg_gui_alert(_("Cheat Codes (GG/AR)"), _("No codes active. Use 'Load' or 'Add Code'."));
+      break;
+    }
+    choices[count++] = (rg_gui_option_t)RG_DIALOG_END;
+
+    intptr_t sel_arg = rg_gui_dialog(_("Cheat Codes (GG/AR)"), choices, last_cheat_sel);
+    if (sel_arg == RG_DIALOG_CANCELLED) break;
+  }
+}
+
+static void handle_add_cheat_menu(void) {
+  char *code = rg_gui_input_str(_("Add Code"), _("Enter Code (GG/AR)"), "");
+  if (code) {
+    char *name = rg_gui_input_str(_("Add Code"), _("Enter Description"), "");
+    if (name) {
+      apply_cheat_code(code, name, true);
+      save_cheats();
+      rg_gui_alert(_("Add Code"), _("Code added successfully."));
+      free(name);
+    }
+    free(code);
+  }
+}
+
+static void handle_delete_cheat_menu(void) {
+  static rg_gui_option_t choices[32];
+  static char choices_names[32][64];
+
+  while (true) {
+    int count = 0;
+    for (int i = 0; i < 30; i++) {
+      uint32_t a;
+      uint8_t v;
+      int c;
+      bool s;
+      char *full_name = NULL;
+      if (!sms_cheat_get(i, &full_name, &a, &v, &c, &s)) break;
+      if (!full_name) continue;
+
+      char *sep = strchr(full_name, '|');
+      if (sep) {
+        size_t len = RG_MIN(sep - full_name, 60);
+        strncpy(choices_names[count], full_name, len);
+        choices_names[count][len] = 0;
+      } else {
+        strncpy(choices_names[count], full_name, 63);
+        choices_names[count][63] = 0;
+      }
+
+      choices[count].flags = RG_DIALOG_FLAG_NORMAL;
+      choices[count].label = choices_names[count];
+      choices[count].value = NULL;
+      choices[count].arg = (intptr_t)i;
+      count++;
+    }
+
+    if (count == 0) {
+      rg_gui_alert(_("Delete Code"), _("No codes to delete."));
+      break;
+    }
+    choices[count++] = (rg_gui_option_t)RG_DIALOG_END;
+
+    intptr_t sel_arg = rg_gui_dialog(_("Delete Code"), choices, 0);
+    if (sel_arg == RG_DIALOG_CANCELLED) break;
+    if (sel_arg >= 0 && sel_arg < 30) {
+      sms_cheat_del((uint32_t)sel_arg);
+      save_cheats();
+    }
+  }
+}
+
+static rg_gui_event_t handle_load_cheats_cb(rg_gui_option_t *opt, rg_gui_event_t event) {
+  if (event == RG_DIALOG_ENTER) {
+    load_cheats();
+    rg_gui_alert(_("Cheat Codes (GG/AR)"), _("Codes loaded from SD Card."));
+  }
+  return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t handle_save_cheats_cb(rg_gui_option_t *opt, rg_gui_event_t event) {
+  if (event == RG_DIALOG_ENTER) {
+    save_cheats();
+    rg_gui_alert(_("Cheat Codes (GG/AR)"), _("Codes saved to SD Card."));
+  }
+  return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t handle_cheat_list_cb(rg_gui_option_t *opt, rg_gui_event_t event) {
+  if (event == RG_DIALOG_ENTER) handle_cheat_menu();
+  return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t handle_add_cheat_menu_cb(rg_gui_option_t *opt, rg_gui_event_t event) {
+  if (event == RG_DIALOG_ENTER) handle_add_cheat_menu();
+  return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t handle_delete_cheat_menu_cb(rg_gui_option_t *opt, rg_gui_event_t event) {
+  if (event == RG_DIALOG_ENTER) handle_delete_cheat_menu();
+  return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t handle_cheat_menu_cb(rg_gui_option_t *opt, rg_gui_event_t event) {
+  if (event == RG_DIALOG_ENTER) {
+    const rg_gui_option_t choices[] = {
+        {0, _("Active Codes"), ">", RG_DIALOG_FLAG_NORMAL, &handle_cheat_list_cb},
+        {0, _("Add New Code"), "-", RG_DIALOG_FLAG_NORMAL, &handle_add_cheat_menu_cb},
+        {0, _("Delete Code"), "-", RG_DIALOG_FLAG_NORMAL, &handle_delete_cheat_menu_cb},
+        {0, _("Load from SD"), "-", RG_DIALOG_FLAG_NORMAL, &handle_load_cheats_cb},
+        {0, _("Save to SD"), "-", RG_DIALOG_FLAG_NORMAL, &handle_save_cheats_cb},
+        RG_DIALOG_END};
+    rg_gui_dialog(_("Cheat Codes (GG/AR)"), choices, 0);
+    // Each child callback already calls save_cheats() when needed
+  }
+  return RG_DIALOG_VOID;
+}
+
+static void options_handler(rg_gui_option_t *dest)
+{
+    *dest++ = (rg_gui_option_t){0, _("Cheat Codes (GG/AR)"), ">", RG_DIALOG_FLAG_NORMAL, &handle_cheat_menu_cb};
+    *dest++ = (rg_gui_option_t){0, _("Palette"), "-", RG_DIALOG_FLAG_NORMAL, &palette_update_cb};
+    *dest++ = CORE_MAXSKIP_OPTION;
+    *dest++ = (rg_gui_option_t)RG_DIALOG_END;
+}
+
+void sms_main(void)
+{
+    const rg_handlers_t handlers = {
+        .loadState = &load_state_handler,
+        .saveState = &save_state_handler,
+        .reset = &reset_handler,
+        .screenshot = &screenshot_handler,
+        .event = &event_handler,
+        .options = &options_handler,
+    };
+
+    app = rg_system_reinit(AUDIO_SAMPLE_RATE, &handlers, NULL);
+
+    updates[0] = rg_surface_create(SMS_WIDTH, SMS_HEIGHT, FB_PIXEL_FORMAT , MEM_FAST);
+    updates[1] = rg_surface_create(SMS_WIDTH, SMS_HEIGHT, FB_PIXEL_FORMAT , MEM_FAST);
+    currentUpdate = updates[0];
+
+    system_reset_config();
+    option.sndrate = AUDIO_SAMPLE_RATE;
+    option.overscan = 0;
+    option.extra_gg = 0;
+    option.tms_pal = rg_settings_get_number(NS_APP, SETTING_PALETTE, 0);
+
+    // SG-1000: by launcher tab (also covers .zip ROMs, whose extension says nothing) or by file extension
+    if (strcmp(app->configNs, "sg1") == 0 || strcmp(app->configNs, "sg") == 0 ||
+        strcmp(app->configNs, "sg1000") == 0 || rg_extension_match(app->romPath, "sg"))
+        option.console = 5;
+    else if (strcmp(app->configNs, "col") == 0 || rg_extension_match(app->romPath, "col"))
+        option.console = 6;
+    else
+        option.console = 0;
+
+    if (rg_extension_match(app->romPath, "zip"))
+    {
+        void *data;
+        size_t size;
+        if (!rg_storage_unzip_file(app->romPath, NULL, &data, &size, RG_FILE_ALIGN_16KB))
+            RG_PANIC("ROM file unzipping failed!");
+        if (!load_rom(data, RG_MAX(0x4000, size), size))
+            RG_PANIC("ROM file loading failed!");
+    }
+    else if (!load_rom_file(app->romPath))
+    {
+        RG_PANIC("ROM file loading failed!");
+    }
+
+    bitmap.width = SMS_WIDTH;
+    bitmap.height = SMS_HEIGHT;
+    bitmap.pitch = bitmap.width;
+    bitmap.data = currentUpdate->data;
+
+    system_poweron();
+
+    updates[0]->offset = bitmap.viewport.x;
+    updates[0]->width = bitmap.viewport.w;
+    updates[0]->height = bitmap.viewport.h;
+    updates[1]->offset = bitmap.viewport.x;
+    updates[1]->width = bitmap.viewport.w;
+    updates[1]->height = bitmap.viewport.h;
+
+    if (app->bootFlags & RG_BOOT_RESUME)
+    {
+        rg_emu_load_state(app->saveSlot);
+    }
+
+    load_cheats();
+
+    rg_system_set_tick_rate((sms.display == DISPLAY_NTSC) ? FPS_NTSC : FPS_PAL);
+    app->frameskip = 0;
+
+    int skipFrames = 0;
+    uint32_t joystick_old = 0;
+    bool menu_cancelled = false;
+    bool menu_pressed = false;
+    bool turbo_a_toggled = false;
+    bool turbo_b_toggled = false;
+    int turbo_counter = 0;
+    int colecoKey = 0;
+    int colecoKeyDecay = 0;
+
+    while (true)
+    {
+        const int64_t startTime = rg_system_timer();
+        uint32_t joystick = rg_input_read_gamepad();
+        bool drawFrame = !skipFrames;
+        bool slowFrame = false;
+
+        const uint32_t joystick_down = joystick & ~joystick_old;
+        const uint32_t joystick_prev = joystick_old;
+        joystick_old = joystick;
+        turbo_counter++;
+
+        // MENU is a modifier: MENU+A / MENU+B toggle turbo, plain tap opens the menu on release
+        if (joystick & RG_KEY_MENU)
+        {
+            if (joystick_down & RG_KEY_A) turbo_a_toggled = !turbo_a_toggled;
+            if (joystick_down & RG_KEY_B) turbo_b_toggled = !turbo_b_toggled;
+            if (joystick & ~RG_KEY_MENU) menu_cancelled = true;
+            menu_pressed = true;
+        }
+        else
+        {
+            if ((joystick_prev & RG_KEY_MENU) && !menu_cancelled)
+                rg_gui_game_menu();
+            menu_cancelled = false;
+            menu_pressed = false;
+        }
+
+        if (joystick & RG_KEY_OPTION)
+            rg_gui_options_menu();
+
+        if (menu_pressed || (joystick & RG_KEY_OPTION))
+            continue;
+
+        input.pad[0] = 0x00;
+        input.pad[1] = 0x00;
+        input.system = 0x00;
+
+        if (joystick & RG_KEY_UP)    input.pad[0] |= INPUT_UP;
+        if (joystick & RG_KEY_DOWN)  input.pad[0] |= INPUT_DOWN;
+        if (joystick & RG_KEY_LEFT)  input.pad[0] |= INPUT_LEFT;
+        if (joystick & RG_KEY_RIGHT) input.pad[0] |= INPUT_RIGHT;
+        if ((joystick & RG_KEY_A) && (!turbo_a_toggled || (turbo_counter & 4))) input.pad[0] |= INPUT_BUTTON2;
+        if ((joystick & RG_KEY_B) && (!turbo_b_toggled || (turbo_counter & 4))) input.pad[0] |= INPUT_BUTTON1;
+
+        if (IS_SMS)
+        {
+            if (joystick & RG_KEY_START)  input.system |= INPUT_PAUSE;
+            if (joystick & RG_KEY_SELECT) input.system |= INPUT_START;
+        }
+        else if (IS_GG)
+        {
+            if (joystick & RG_KEY_START)  input.system |= INPUT_START;
+            if (joystick & RG_KEY_SELECT) input.system |= INPUT_PAUSE;
+        }
+        else if (sms.console == CONSOLE_SG1000 || sms.console == CONSOLE_SC3000 || sms.console == CONSOLE_SF7000)
+        {
+            // SG-1000 has no START button: games use the console's PAUSE (NMI) as "start".
+            // It used to fall into the ColecoVision branch below (keypad prompt + muted audio).
+            if (joystick & RG_KEY_START)  input.system |= INPUT_PAUSE;
+            if (joystick & RG_KEY_SELECT)
+            {
+                rg_task_delay(100);
+                system_reset();
+                continue;
+            }
+        }
+        else // Coleco
+        {
+            coleco.keypad[0] = 0xff;
+            coleco.keypad[1] = 0xff;
+
+            if (colecoKeyDecay > 0)
+            {
+                coleco.keypad[0] = colecoKey;
+                colecoKeyDecay--;
+            }
+
+            if (joystick & RG_KEY_START)
+            {
+                rg_gui_draw_text(RG_GUI_CENTER, RG_GUI_CENTER, 0, _("To start, try: 1 or * or #"), C_YELLOW, C_BLACK, RG_TEXT_BIGGER);
+                rg_audio_set_mute(true);
+                int key = rg_gui_input_char(&coleco_keyboard);
+                rg_audio_set_mute(false);
+
+                if (key >= '0' && key <= '9')
+                    colecoKey = key - '0';
+                else if (key == '*')
+                    colecoKey = 10;
+                else if (key == '#')
+                    colecoKey = 11;
+                else
+                    colecoKey = 255;
+                colecoKeyDecay = 4;
+                continue;
+            }
+            else if (joystick & RG_KEY_SELECT)
+            {
+                rg_task_delay(100);
+                system_reset();
+                continue;
+            }
+        }
+
+        sms_cheat_apply();
+        system_frame(!drawFrame);
+
+        if (drawFrame)
+        {
+            if (render_copy_palette(currentUpdate->palette))
+            {
+                // render_copy_palette gives us big-endian colors
+                if (FB_PIXEL_FORMAT  != RG_PIXEL_PAL565_BE)
+                {
+                    uint16_t *palette = currentUpdate->palette;
+                    for (size_t i = 0; i < 256; ++i)
+                        palette[i] = (palette[i] << 8) | (palette[i] >> 8);
+                }
+                memcpy(updates[currentUpdate == updates[0]]->palette, currentUpdate->palette, 512);
+            }
+            slowFrame = rg_display_is_busy();
+            rg_display_submit(currentUpdate, 0);
+            currentUpdate = updates[currentUpdate == updates[0]]; // Swap
+            bitmap.data = currentUpdate->data;
+        }
+
+        // The emulator's sound buffer isn't in a very convenient format, we must remix it.
+        size_t sample_count = snd.sample_count;
+        rg_audio_sample_t mixbuffer[sample_count];
+        for (size_t i = 0; i < sample_count; i++)
+        {
+            mixbuffer[i].left = snd.stream[0][i] * 2.75f;
+            mixbuffer[i].right = snd.stream[1][i] * 2.75f;
+        }
+
+        // Tick before submitting audio/syncing
+        rg_system_tick(rg_system_timer() - startTime);
+
+        // Audio is used to pace emulation :)
+        rg_audio_submit(mixbuffer, sample_count);
+
+        // See if we need to skip a frame to keep up
+        if (skipFrames == 0)
+        {
+            int elapsed = rg_system_timer() - startTime;
+            if (core_frameskip(app) > 0)
+                skipFrames = core_frameskip(app);
+            else if (elapsed > app->frameTime + 1500) // Allow some jitter
+                skipFrames = 1; // (elapsed / frameTime)
+            else if (drawFrame && slowFrame)
+                skipFrames = 1;
+        }
+        else if (skipFrames > 0)
+        {
+            skipFrames--;
+        }
+    }
+}

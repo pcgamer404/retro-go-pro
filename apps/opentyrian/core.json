@@ -1,0 +1,7 @@
+{
+  "id": "opentyrian",
+  "title": "Tyrian",
+  "launch_mode": "rom",
+  "rom_extensions": ["tyr"],
+  "rom_folder": "opentyrian"
+}

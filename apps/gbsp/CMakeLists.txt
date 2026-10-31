@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.5)
+# xjit: Xtensa JIT core (emitter, blocks, executable PSRAM); esp_mm: esp_mmu_map / esp_cache_msync
+set(COMPONENTS "main retro-go gbsp-libretro app_trace bootloader esptool_py")
+if(NOT "$ENV{GBAJIT}" STREQUAL "0")   # dynarec by default, GBAJIT=0: interpreter only
+    list(APPEND COMPONENTS xjit esp_mm)
+endif()
+set(RG_ENABLE_NETWORKING 0)
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
+elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../base.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../../base.cmake")
+else()
+    message(FATAL_ERROR "Could not find base.cmake next to this core or two levels above it")
+endif()
+project(gbsp)

@@ -1,0 +1,7 @@
+{
+  "id": "wsc-go",
+  "title": "Wonderswan (Color)",
+  "launch_mode": "rom",
+  "rom_extensions": ["ws", "wsc"],
+  "rom_folder": "ws"
+}

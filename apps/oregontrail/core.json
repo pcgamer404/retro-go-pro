@@ -1,0 +1,7 @@
+{
+  "id": "oregontrail",
+  "title": "Oregon Trail",
+  "launch_mode": "direct",
+  "rom_extensions": ["trail"],
+  "rom_folder": "oregontrail"
+}

@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "prboom-go",
+  "title": "Doom",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "wad"
+  ],
+  "rom_folder": "doom",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

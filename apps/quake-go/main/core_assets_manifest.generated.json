@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "quake-go",
+  "title": "Quake",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "quake"
+  ],
+  "rom_folder": "quake",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

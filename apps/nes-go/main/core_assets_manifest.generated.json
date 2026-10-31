@@ -1,0 +1,22 @@
+{
+  "schema": 2,
+  "id": "nes-go",
+  "title": "Nintendo Entertainment System",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "fc",
+    "fds",
+    "nes",
+    "nsf",
+    "unf",
+    "unif",
+    "zip"
+  ],
+  "rom_folder": "nes",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

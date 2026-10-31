@@ -1,0 +1,7 @@
+{
+  "id": "sm64-go",
+  "title": "Super Mario 64",
+  "launch_mode": "rom",
+  "rom_extensions": ["z64"],
+  "rom_folder": "n64"
+}

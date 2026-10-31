@@ -1,0 +1,13 @@
+{
+  "schema": 2,
+  "id": "lynx-go",
+  "title": "Atari Lynx",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "lnx",
+    "zip"
+  ],
+  "rom_folder": "lnx",
+  "art": []
+}

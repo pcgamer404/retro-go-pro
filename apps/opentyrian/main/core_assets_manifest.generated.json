@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "opentyrian",
+  "title": "Tyrian",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "tyr"
+  ],
+  "rom_folder": "opentyrian",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

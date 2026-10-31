@@ -1,0 +1,7 @@
+{
+  "id": "prboom-go",
+  "title": "Doom",
+  "launch_mode": "rom",
+  "rom_extensions": ["wad"],
+  "rom_folder": "doom"
+}

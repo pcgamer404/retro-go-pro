@@ -1,0 +1,7 @@
+{
+  "id": "quake-go",
+  "title": "Quake",
+  "launch_mode": "rom",
+  "rom_extensions": ["quake"],
+  "rom_folder": "quake"
+}

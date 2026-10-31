@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "arcade3d",
+  "title": "Arcade 3D",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "run"
+  ],
+  "rom_folder": "arcade3d",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

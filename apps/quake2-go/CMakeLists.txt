@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.5)
+
+# Keep this app's perf settings in every build.
+# Some entry points (rg_tool.py, IDE integrations) set SDKCONFIG_DEFAULTS to the
+# target's sdkconfig only, which silently drops the cache sizes and -O2 from
+# sdkconfig.defaults. Merge it back before project() reads the variable; later
+# defaults win, so the app file must be last.
+set(Q2_SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+if(EXISTS "${Q2_SDKCONFIG_DEFAULTS}")
+    if(SDKCONFIG_DEFAULTS)
+        set(_q2_sdkconfig_list "${SDKCONFIG_DEFAULTS}")
+    else()
+        set(_q2_sdkconfig_list "$ENV{SDKCONFIG_DEFAULTS}")
+    endif()
+    string(REPLACE "\\" "/" _q2_sdkconfig_list "${_q2_sdkconfig_list}")
+    string(FIND "${_q2_sdkconfig_list}" "/quake2-go/sdkconfig.defaults" _q2_sdkconfig_pos)
+    if(_q2_sdkconfig_pos EQUAL -1)
+        if(_q2_sdkconfig_list STREQUAL "")
+            set(_q2_sdkconfig_list "${Q2_SDKCONFIG_DEFAULTS}")
+        else()
+            set(_q2_sdkconfig_list "${_q2_sdkconfig_list};${Q2_SDKCONFIG_DEFAULTS}")
+        endif()
+        if(SDKCONFIG_DEFAULTS)
+            set(SDKCONFIG_DEFAULTS "${_q2_sdkconfig_list}")
+        else()
+            set(ENV{SDKCONFIG_DEFAULTS} "${_q2_sdkconfig_list}")
+        endif()
+        message(STATUS "quake2-go: SDKCONFIG_DEFAULTS = ${_q2_sdkconfig_list}")
+    endif()
+endif()
+
+set(COMPONENTS "main retro-go quake2")
+set(RG_ENABLE_NETWORKING 0)
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
+elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../base.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../../base.cmake")
+else()
+    message(FATAL_ERROR "Could not find base.cmake next to this app or two levels above it")
+endif()
+project(quake2-go)

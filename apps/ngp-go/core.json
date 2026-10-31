@@ -1,0 +1,7 @@
+{
+  "id": "ngp-go",
+  "title": "Neo Geo Pocket",
+  "launch_mode": "rom",
+  "rom_extensions": ["ngc"],
+  "rom_folder": "ngp"
+}

@@ -1,0 +1,7 @@
+{
+  "id": "cannonball",
+  "title": "OutRun",
+  "launch_mode": "rom",
+  "rom_extensions": ["ball"],
+  "rom_folder": "cannonball"
+}

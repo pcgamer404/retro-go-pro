@@ -1,0 +1,32 @@
+# Nano Java SDK settings. Applied after the board's sdkconfig (see ./CMakeLists.txt).
+#
+# This file is the authority for the app's configuration. Never rely on
+# ./sdkconfig alone: it is generated, and a generated sdkconfig always wins over
+# every defaults file, so a setting that only lives there is silently lost the
+# next time the project is rebuilt from scratch ("release", "clean").
+
+# Bigger caches. The VM heap, every decoded image and all class metadata live in
+# PSRAM, so essentially every object field or array access goes through the data
+# cache; 64 KB instead of the board's 32 KB keeps roughly twice as much of that
+# working set resident. The caches are configured by the application at startup
+# (esp_system/port/cpu_start.c), not by the bootloader, so this needs no
+# bootloader update - but it does cost internal RAM: the extra 32 KB of data
+# cache and 16 KB of instruction cache are taken from the heap (~48 KB, i.e.
+# internal free drops from ~266 KB to ~218 KB). Cache line size stays at 32
+# bytes: the VM's PSRAM access pattern is scattered, so more lines are worth
+# more than a longer burst. Revert by deleting these six lines.
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_8WAYS=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_LINE_32B=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_8WAYS=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_32B=y
+
+# A 100 Hz tick makes pdMS_TO_TICKS() round every delay shorter than 10 ms down
+# to zero ticks, and taskYIELD() does not stop the CPU, so pal_wait() ended up
+# spinning for the whole duration of every wait instead of sleeping - including
+# the 1 ms sleeps that short-sleep shortening now produces. At 1000 Hz waits are
+# really slept and the CPU stays free for the display worker, the USB audio task
+# and Retro-Go's input task. FreeRTOS configuration only: no effect on the
+# bootloader, the memory map or other apps.
+CONFIG_FREERTOS_HZ=1000

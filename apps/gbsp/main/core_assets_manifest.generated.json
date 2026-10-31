@@ -1,0 +1,17 @@
+{
+  "schema": 2,
+  "id": "gbsp",
+  "title": "Gameboy Advance",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "gba",
+    "zip"
+  ],
+  "rom_folder": "gba",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

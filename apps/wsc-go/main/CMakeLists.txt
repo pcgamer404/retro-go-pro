@@ -1,0 +1,5 @@
+set(COMPONENT_SRCDIRS ".")
+set(COMPONENT_ADD_INCLUDEDIRS ".")
+set(COMPONENT_REQUIRES "retro-go oswan")
+register_component()
+rg_setup_compile_options(-O2)

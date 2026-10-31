@@ -1,0 +1,17 @@
+{
+  "schema": 2,
+  "id": "wsc-go",
+  "title": "Wonderswan (Color)",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "ws",
+    "wsc"
+  ],
+  "rom_folder": "ws",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

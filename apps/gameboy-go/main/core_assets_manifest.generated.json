@@ -1,0 +1,18 @@
+{
+  "schema": 2,
+  "id": "gameboy-go",
+  "title": "Game Boy / Game Boy Color",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "gb",
+    "gbc",
+    "zip"
+  ],
+  "rom_folder": "gbc",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

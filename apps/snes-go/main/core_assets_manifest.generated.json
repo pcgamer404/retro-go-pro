@@ -1,0 +1,19 @@
+{
+  "schema": 2,
+  "id": "snes-go",
+  "title": "Super Nintendo",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "sfc",
+    "smc",
+    "snes",
+    "zip"
+  ],
+  "rom_folder": "snes",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

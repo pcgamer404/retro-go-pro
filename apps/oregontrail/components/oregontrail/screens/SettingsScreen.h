@@ -1,0 +1,124 @@
+// Device settings: brightness, volume, recalibrate, sleep, restart, wipe the
+// Top Five. Reachable from the main menu and the trail menu.
+#pragma once
+#include "compat/Arduino.h"
+
+#include "compat/LovyanGFX.hpp"
+
+#include "SaveGame.h"
+#include "Settings.h"
+#include "hw/Audio.h"
+#include "hw/Battery.h"
+#include "screens/MessageScreen.h"
+#include "ui/App.h"
+#include "ui/Screen.h"
+#include "ui/ScreenStack.h"
+#include "ui/Theme.h"
+#include "ui/Widgets.h"
+
+class SettingsScreen : public Screen {
+public:
+    void render(LGFX_Sprite& g) override {
+        g.fillScreen(theme::BG);
+        ui::drawCentered(g, "SETTINGS", 160, 6, theme::ACCENT, 4);
+
+        char b[44];
+        const int chg = battery::charging();
+        snprintf(b, sizeof(b), "Battery %d%%  %.2fV%s", battery::percent(),
+                 battery::volts(),
+                 chg == 1 ? "  charging" : chg == 0 ? "  full" : "");
+        ui::drawCentered(g, b, 160, 34, theme::INK_DIM, 2);
+
+        slider(g, "Brightness", 62, bMinus_, bPlus_, bBar_,
+               (prefs::brightness - prefs::kBrightMin) * 100 /
+                   (prefs::kBrightMax - prefs::kBrightMin),
+               278, theme::INK);
+
+        slider(g, prefs::volume == 0 ? "Volume  (off)" : "Volume", 94,
+               vMinus_, vPlus_, vBar_, prefs::volume * 10, 278, theme::ACCENT);
+
+        const int16_t W = 320 - 2 * theme::MARGIN, cw = (W - 8) / 2;
+        const int16_t x2 = theme::MARGIN + cw + 8;
+        recal_   = {theme::MARGIN, 128, cw, 30};
+        sleep_   = {x2,            128, cw, 30};
+        restart_ = {theme::MARGIN, 164, cw, 30};
+        erase_   = {x2,            164, cw, 30};
+        back_    = {theme::MARGIN, 202, W, 30};
+        ui::drawButton(g, recal_, "Recalibrate touch", selected_==2);
+        ui::drawButton(g, sleep_, "Sleep now", selected_==3);
+        ui::drawButton(g, restart_, "Restart", selected_==4);
+        ui::drawButton(g, erase_, "Erase Top Five", selected_==5);
+        ui::drawButton(g, back_, "Back", selected_==6);
+    }
+
+    void onDpad(int dx, int dy) override {
+        if(dy<0) selected_=(selected_+6)%7; else if(dy>0) selected_=(selected_+1)%7;
+        else if(dx<0 && selected_==0) bump(prefs::brightness,-prefs::kBrightStep);
+        else if(dx>0 && selected_==0) bump(prefs::brightness,prefs::kBrightStep);
+        else if(dx<0 && selected_==1) bumpVol(-1);
+        else if(dx>0 && selected_==1) bumpVol(1);
+    }
+    void onConfirm(int16_t, int16_t) override {
+        switch(selected_){ case 0: bump(prefs::brightness,prefs::kBrightStep); break; case 1: bumpVol(1); break; case 2: app::wantRecal=true; break; case 3: app::wantSleep=true; break; case 4: app::wantRestart=true; break; case 5: savegame::eraseHighScores(); app::screens.push(new MessageScreen("Done","The Top Five is wiped.")); break; case 6: app::screens.pop(); break; }
+    }
+
+    void onTap(int16_t x, int16_t y) override {
+        if (bMinus_.contains(x, y)) bump(prefs::brightness, -prefs::kBrightStep);
+        else if (bPlus_.contains(x, y)) bump(prefs::brightness, prefs::kBrightStep);
+        else if (vMinus_.contains(x, y)) bumpVol(-1);
+        else if (vPlus_.contains(x, y)) bumpVol(+1);
+        else if (recal_.contains(x, y)) app::wantRecal = true;
+        else if (sleep_.contains(x, y)) app::wantSleep = true;
+        else if (restart_.contains(x, y)) app::wantRestart = true;
+        else if (erase_.contains(x, y)) {
+            savegame::eraseHighScores();
+            app::screens.push(new MessageScreen("Done", "The Top Five is wiped."));
+        } else if (back_.contains(x, y)) {
+            app::screens.pop();
+        }
+    }
+
+private:
+    ui::Rect bMinus_{}, bPlus_{}, bBar_{}, vMinus_{}, vPlus_{}, vBar_{};
+    ui::Rect recal_{}, sleep_{}, restart_{}, erase_{}, back_{};
+    int selected_=6;
+
+    void bump(int& v, int d) {
+        v += d;
+        if (v < prefs::kBrightMin) v = prefs::kBrightMin;
+        if (v > prefs::kBrightMax) v = prefs::kBrightMax;
+        app::setBrightness(v);
+        prefs::save();
+    }
+
+    void bumpVol(int d) {
+        int v = prefs::volume + d;
+        if (v < 0) v = 0;
+        if (v > prefs::kVolMax) v = prefs::kVolMax;
+        if (v == prefs::volume) return;
+        prefs::volume = v;
+        audio::setLevel(v);
+        prefs::save();
+        // short audible preview of the new level
+        static const audio::Note kBlip[] = {{784, 90}, {0, 30}, {1047, 120}};
+        if (v > 0 && !audio::songPlaying())
+            audio::playSong(kBlip, sizeof(kBlip) / sizeof(kBlip[0]));
+    }
+
+    static void slider(LGFX_Sprite& g, const char* label, int16_t y, ui::Rect& minus,
+                       ui::Rect& plus, ui::Rect& bar, int pct, int16_t barEndX,
+                       uint16_t barColor) {
+        g.setFont(&fonts::Font2);
+        g.setTextDatum(textdatum_t::middle_left);
+        g.setTextColor(theme::INK);
+        g.drawString(label, theme::MARGIN, y + 12);
+        minus = {96, y, 26, 24};
+        plus  = {286, y, 26, 24};
+        ui::drawButton(g, minus, "-");
+        ui::drawButton(g, plus, "+");
+        bar = {128, (int16_t)(y + 6), (int16_t)(barEndX - 128), 12};
+        g.drawRect(bar.x, bar.y, bar.w, bar.h, theme::FRAME);
+        const int fill = (bar.w - 2) * pct / 100;
+        if (fill > 0) g.fillRect(bar.x + 1, bar.y + 1, fill, bar.h - 2, barColor);
+    }
+};

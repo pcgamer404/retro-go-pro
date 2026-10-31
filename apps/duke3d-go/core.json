@@ -1,0 +1,7 @@
+{
+  "id": "duke3d-go",
+  "title": "Duke Nuke 3D",
+  "launch_mode": "rom",
+  "rom_extensions": ["GRP"],
+  "rom_folder": "duke3d"
+}

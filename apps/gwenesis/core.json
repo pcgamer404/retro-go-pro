@@ -1,0 +1,7 @@
+{
+  "id": "gwenesis",
+  "title": "Sega Mega Drive",
+  "launch_mode": "rom",
+  "rom_extensions": ["md", "zip"],
+  "rom_folder": "md"
+}

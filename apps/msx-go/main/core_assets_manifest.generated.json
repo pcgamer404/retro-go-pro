@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "msx-go",
+  "title": "MSX",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "rom"
+  ],
+  "rom_folder": "msx",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

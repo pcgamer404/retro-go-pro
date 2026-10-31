@@ -1,0 +1,17 @@
+{
+  "schema": 2,
+  "id": "gwenesis",
+  "title": "Sega Mega Drive",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "md",
+    "zip"
+  ],
+  "rom_folder": "md",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

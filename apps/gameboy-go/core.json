@@ -1,0 +1,7 @@
+{
+  "id": "gameboy-go",
+  "title": "Game Boy / Game Boy Color",
+  "launch_mode": "rom",
+  "rom_extensions": ["gb", "gbc", "zip"],
+  "rom_folder": "gbc" 
+}

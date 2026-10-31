@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.5)
+# Arcade 3D: standalone game port (OutRun-style racer), no ROM needed.
+set(COMPONENTS "main retro-go arcade3d")
+set(RG_ENABLE_NETWORKING 0)
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
+elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../base.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../../base.cmake")
+else()
+    message(FATAL_ERROR "Could not find base.cmake next to this core or two levels above it")
+endif()
+project(arcade3d)

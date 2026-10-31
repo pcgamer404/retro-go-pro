@@ -1,0 +1,7 @@
+{
+  "id": "store",
+  "title": "Store",
+  "launch_mode": "rom",
+  "rom_extensions": ["none"],
+  "rom_folder": "store"
+}

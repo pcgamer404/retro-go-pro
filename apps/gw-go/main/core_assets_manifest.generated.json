@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "gw-go",
+  "title": "Game & Watch",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "gw"
+  ],
+  "rom_folder": "gw",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

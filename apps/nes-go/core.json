@@ -1,0 +1,7 @@
+{
+  "id": "nes-go",
+  "title": "Nintendo Entertainment System",
+  "launch_mode": "rom",
+  "rom_extensions": ["nes", "fc", "fds", "nsf", "unif", "unf", "zip"],
+  "rom_folder": "nes"
+}

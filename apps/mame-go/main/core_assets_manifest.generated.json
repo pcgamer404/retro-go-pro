@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "mame-go",
+  "title": "Arcade (Mame)",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "zip"
+  ],
+  "rom_folder": "arcade",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

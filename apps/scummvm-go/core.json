@@ -1,0 +1,7 @@
+{
+  "id": "scummvm-go",
+  "title": "ScummVM",
+  "launch_mode": "rom",
+  "rom_extensions": ["zip"],
+  "rom_folder": "scummvm"
+}

@@ -1,0 +1,18 @@
+{
+  "schema": 2,
+  "id": "rott",
+  "title": "Rise of the Triad",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "game",
+    "wad",
+    "zip"
+  ],
+  "rom_folder": "rott",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

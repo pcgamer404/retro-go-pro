@@ -1,0 +1,7 @@
+{
+  "id": "mame-go",
+  "title": "Arcade (Mame)",
+  "launch_mode": "rom",
+  "rom_extensions": ["zip"],
+  "rom_folder": "arcade"
+}

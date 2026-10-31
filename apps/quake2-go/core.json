@@ -1,0 +1,7 @@
+{
+  "id": "quake2-go",
+  "title": "Quake II",
+  "launch_mode": "rom",
+  "rom_extensions": ["pak"],
+  "rom_folder": "quake2"
+}
