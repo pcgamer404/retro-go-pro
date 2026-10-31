@@ -21,21 +21,9 @@ For the full feature set, supported hardware list and general documentation, see
 - Extra emulator cores and game ports beyond stock retro-go
 - Optional **USB DAC audio** output for the ESP32-S3-DevKitC-1
 
-## Supported Systems
+## Supported Ports
 
-**Nintendo**: NES, SNES, GB, GBC, GBA (dynarec), Game & Watch
-
-**Sega**: Game Gear, Master System, Genesis, SG-1000
-
-**Atari**: Lynx, 2600
-
-**Arcade**: MAME (`mame-go`)
-
-**Other**: MSX, PC Engine, ColecoVision, WonderSwan, Neo Geo Pocket (+ Color), Commodore 64, PICO-8 *(slow)*
-
-## Ports
-
-DOOM, Wolfenstein 3D, Duke Nukem 3D, Celeste Classic (PICO-8 port), Outrun, ClassiCube (open-source Minecraft clone), OpenLara (Tomb Raider), Super Mario 64 *(very slow)*, The Oregon Trail
+DOOM, Wolfenstein 3D, Duke Nukem 3D, Celeste Classic (PICO-8 port), Outrun, ClassiCube (open-source Minecraft clone), OpenLara (Tomb Raider), The Oregon Trail, Jazz Jackrabbit, opentyrian (Tyrian), Quake, Quake 2 (in early stage) , Rise of The Triad
 
 > **Note:** Ports require your own legally obtained game files. None are included.
 
@@ -72,7 +60,7 @@ An optional **USB DAC** audio output, aimed at the [ESP32-S3-DevKitC-1 v1.1](htt
 
 The DevKitC-1 has two USB-C ports (native USB and a USB-UART bridge), so check the [user guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html) for which one is which.
 
-![ESP32-S3-DevKitC-1 v1.1](docs/esp32-s3-devkitc-1-v1.1.png)
+<img width="2520" height="1960" alt="retro_handheld_wiring_clean" src="https://github.com/user-attachments/assets/03e4a3c7-ab24-4ce8-b091-8be09c4987c0" />
 
 ### Minor Improvements
 
