@@ -6,10 +6,9 @@ For the full feature set, supported hardware list and general documentation, see
 
 ## What's New
 
-- **Faster SNES** (`snes-go`): performance improvements
-- **Faster Neo Geo Pocket** (`ngp-go`): performance improvements
-- **GBA dynarec:** `gbsp` now uses the dynamic recompiler from [pjcau/retro-go](https://github.com/pjcau/retro-go), for a big boost in GBA performance
-- **Arcade support:** added `mame-go`, ported from [pjcau/retro-go](https://github.com/pjcau/retro-go)
+- **Quake II** (`quake2-go`): in initial stage of development 
+- **Jazz Jackrabbit** (`openjazz`): complete working port
+- **The Oregon Trail** (`oregontrail`): complete working port
 - **USB DAC audio option** for the [ESP32-S3-DevKitC-1 v1.1](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html) (see [USB DAC Audio](#usb-dac-audio))
 - **[Retro-Go Assistant](https://github.com/pcgamer404/Retro-go-Assistant):** a Windows GUI for building, flashing and monitoring (see below)
 
