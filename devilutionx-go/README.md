@@ -76,14 +76,12 @@ Ensure your MicroSD card is formatted as **FAT32**.
 SD Card Root (/)
 │
 ├── roms/
-│   └── diablo/
-│       ├── DIABDAT.MPQ            <-- Diablo 1 game data (Retail or Shareware)
-│       ├── devilutionx.mpq        <-- Engine assets & fonts (bundled)
-│       └── devilutionx.png        <-- Box art preview (optional)
-│
-└── retro-go/
-    └── cores/
-        └── devilutionx-go.bin     <-- Retro-Go core binary
+     └── diablo/
+          ├── DIABDAT.MPQ            <-- Diablo 1 game data (Retail or Shareware)
+          ├── devilutionx.mpq        <-- Engine assets & fonts (bundled)
+                └── devilutionx.png        <-- Box art preview (optional)
+
+
 ```
 
 > [!IMPORTANT]
@@ -133,33 +131,6 @@ Configured specifically for consoles without shoulder buttons:
 | **SELECT + X** | **Toggle Quest Log** | Opens / closes the active quests journal |
 | **SELECT + D-Pad DOWN** | **Cycle Automap** | Cycles minimap zoom / modes |
 | **SELECT + D-Pad UP** | **Game Options** | Quick shortcut to the options menu |
-
----
-
-## Building from Source
-
-### Prerequisites:
-- **ESP-IDF**: Version `v5.3.5` (or compatible `v5.3.x` release)
-- **Python**: 3.10+
-- **Retro-Go / Retro-Go Pro** source tree
-
-### Build Command:
-1. Open an ESP-IDF terminal environment:
-   ```cmd
-   call C:\Espressif\frameworks\esp-idf-v5.3.5\export.bat
-   ```
-2. Navigate to your Retro-Go `cores` directory:
-   ```cmd
-   cd /d D:\Games\E\retro-go-pro\cores
-   ```
-3. Build the core targeting your hardware configuration:
-   ```cmd
-   python rg_tool.py build-core devilutionx-go --target <your-target-name>
-   ```
-4. The output binary will be created at:
-   ```
-   cores/devilutionx-go.bin
-   ```
 
 ---
 
