@@ -1,5 +1,0 @@
-if(NOT TARGET ZLIB::ZLIB)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(ZLIB REQUIRED IMPORTED_TARGET zlib)
-  add_library(ZLIB::ZLIB ALIAS PkgConfig::ZLIB)
-endif()

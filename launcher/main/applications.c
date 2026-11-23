@@ -729,7 +729,8 @@ static void application(const char *desc, const char *name, const char *exts, co
 }
 
 void applications_init(void) {
-  application("Diablo", "diablo", "mpq", "devilutionx-go", 0);
+  application("J2ME", "jar", "jar", "j2me-go", 0);
+  // application("Diablo", "diablo", "mpq", "devilutionx-go", 0);
   // application("Nintendo Entertainment System", "nes", "nes fc zip", "retro-core", 16);
   // application("Nintendo Gameboy", "gb", "gb gbc zip", "retro-core", 0);
   // application("Nintendo Gameboy Color", "gbc", "gbc gb zip", "retro-core", 0);
@@ -747,7 +748,6 @@ void applications_init(void) {
   // application("Store", "store", "none", "store", 0);
   // application("Jazz Jackrabbit", "openjazz", "jazz", "openjazz", 0);
   // application("DevilutionX-go", "diablo", "diablo", "devilutionx-go", 0);
-  // application("J2ME", "jar", "jar", "j2me-go", 0);
   // application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
   // application("WonderSwan", "ws", "ws wsc zip", "wsc-go", 0);
   // application("Pico-8", "pico8", "p8 png zip", "pico8", 0);

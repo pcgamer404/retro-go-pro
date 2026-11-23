@@ -1,6 +1,0 @@
-file(GLOB SHEENBIDI_SRCS "Source/*.c")
-add_library(SheenBidi STATIC ${SHEENBIDI_SRCS})
-target_include_directories(SheenBidi PUBLIC "Headers")
-target_include_directories(SheenBidi PRIVATE "Source")
-target_compile_options(SheenBidi PRIVATE -Wno-error -O2)
-add_library(SheenBidi::SheenBidi ALIAS SheenBidi)

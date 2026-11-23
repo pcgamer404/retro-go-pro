@@ -1,0 +1,7 @@
+{
+  "id": "j2me-dynarec",
+  "title": "J2ME",
+  "launch_mode": "rom",
+  "rom_extensions": ["jar", "mjar", "zip"],
+  "rom_folder": "jar"
+}

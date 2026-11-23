@@ -1,0 +1,18 @@
+{
+  "schema": 2,
+  "id": "j2me-dynarec",
+  "title": "J2ME",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "jar",
+    "mjar",
+    "zip"
+  ],
+  "rom_folder": "jar",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

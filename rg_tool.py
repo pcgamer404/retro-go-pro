@@ -21,7 +21,7 @@ PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 PROJECT_APPS = {
   # Project name  Type, SubType, Size
   'launcher':       [0, 16, 1048576],
-  'devilutionx-go': [0, 16, 3145728],
+  'j2me-go': [0, 16, 1048576],
 }
 
 # PROJECT_APPS = {}
