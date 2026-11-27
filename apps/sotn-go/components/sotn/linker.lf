@@ -1,0 +1,26 @@
+[scheme:sotn_psram_scheme]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[scheme:sotn_rodata_scheme]
+entries:
+    data -> flash_rodata
+    rodata -> flash_rodata
+    bss -> extern_ram
+    common -> extern_ram
+
+[scheme:sotn_iram_scheme]
+entries:
+    text -> iram0_text
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:sotn_psram_mapping]
+archive: libsotn.a
+entries:
+    d_2FE48 (sotn_rodata_scheme)
+    soft_esp32 (sotn_iram_scheme)
+    libgpu (sotn_iram_scheme)
+    rg_lcd (sotn_iram_scheme)
+    * (sotn_psram_scheme)

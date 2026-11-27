@@ -1,0 +1,7 @@
+set(COMPONENT_SRCDIRS ".")
+set(COMPONENT_ADD_INCLUDEDIRS ".")
+set(COMPONENT_REQUIRES retro-go fallout_common fallout1 fallout2 esp_hw_support esp_timer)
+set(COMPONENT_ADD_LDFRAGMENTS "fallout.lf")
+register_component()
+add_definitions(-DPLATFORM_ESP32=1)
+rg_setup_compile_options(-Wno-error -O2 -Wno-format-truncation)

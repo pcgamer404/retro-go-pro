@@ -487,7 +487,11 @@ static void mame_task(void *arg)
         mamego_present_indexed = present_indexed;
     }
     if (!retro_load_game(&game))
-        RG_PANIC("This game is not supported, or its ROM set is incomplete");
+    {
+        rg_display_clear(C_BLACK);
+        rg_gui_alert("Cannot Load Game", "This game is not supported, or its ROM set\nis incomplete (requires MAME 0.37b5 set).\nClones need their parent zip in /arcade/.");
+        rg_system_exit();
+    }
 
     struct retro_system_av_info av;
     retro_get_system_av_info(&av);

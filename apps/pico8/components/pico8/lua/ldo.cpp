@@ -6,6 +6,7 @@
 
 
 #include <stdio.h>
+#include <cmath>
 #include "fix32.h"
 #include <setjmp.h>
 #include <stdlib.h>
@@ -375,9 +376,24 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
         const int y = (int)ynum;
         uint8_t pixel = 0;
         const unsigned char *memory = G(L)->pico8memory;
+        const unsigned char *memory_high = G(L)->pico8memory_high;
         if (memory != NULL && x >= 0 && x < 128 && y >= 0 && y < 128) {
           const uint32_t nibble = (uint32_t)y * 128u + (uint32_t)x;
-          const uint8_t packed = memory[nibble >> 1];
+          /* Honor the 0x5f54 sprite-sheet relocation the same way sget() in
+             pico8api.c does: the sheet may live at 0x0000 (default), 0x6000
+             (screen) or one of the 0x8000..0xe000 extended-RAM pages. The
+             old VM path always read the default sheet, so carts that
+             relocate the sheet and probe it with sget() saw stale pixels. */
+          const uint32_t page = (uint32_t)memory[0x5f54] << 8;
+          uint8_t packed;
+          if (page != 0 && page <= 0x10000u - 0x2000u) {
+            const uint32_t addr = page + (nibble >> 1);
+            packed = (addr < 0x8000)
+                ? memory[addr]
+                : (memory_high != NULL ? memory_high[addr - 0x8000] : 0);
+          } else {
+            packed = memory[nibble >> 1];
+          }
           pixel = (nibble & 1u) ? (packed >> 4) : (packed & 0x0f);
         }
 
@@ -412,7 +428,9 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
       }
 
       // printf("tagtype/typecode: %d; tag %d, arg: %d\n", tt, tag, (int16_t)valarg1);
-      lua_Number res;
+      // Always initialise: several tags used to leave `res` untouched and the
+      // final setnvalue() below then published an indeterminate value.
+      lua_Number res = lua_Number((uint8_t)0);
       switch (tag) {
           // 1 args
           case FCF_CEIL:
@@ -442,22 +460,47 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
 
           // 2 args
           case FCF_ATAN2:
+              {
+                  // PICO-8: atan2(dx, dy) = 0.75 + atan2(dx, dy) / 2pi, wrapped
+                  // into 0..1. Mirrors pico8_atan2() in lpico8lib.cpp, which is
+                  // the implementation this fast call replaces.
+                  float a = 0.75f + std::atan2((float)valarg1, (float)valarg2)
+                                   / 6.28318530717958647692f;
+                  if (a >= 1) a -= 1;
+                  res = a;
+                  break;
+              }
           case FCF_BAND:
+              res = valarg1 & valarg2;
+              break;
           case FCF_BOR:
+              res = valarg1 | valarg2;
+              break;
           case FCF_BXOR:
+              res = valarg1 ^ valarg2;
+              break;
           case FCF_SHL:
+              res = valarg1 << int(valarg2);
+              break;
           case FCF_SHR:
               res = valarg1 >> int(valarg2);
               break;
           case FCF_LSHR:
+              res = lua_Number::lshr(valarg1, int(valarg2));
+              break;
           case FCF_ROTL:
+              res = lua_Number::rotl(valarg1, int(valarg2));
+              break;
           case FCF_ROTR:
+              res = lua_Number::rotr(valarg1, int(valarg2));
               break;
           // 3 args
           case FCF_MID:
               {
-                  TValue *floor = func + 1;
-                  setnvalue(func, z8::fix32::floor(nvalue(floor)));
+                  // mid(x, y, z): the value between the other two.
+                  lua_Number lo = valarg1 < valarg2 ? valarg1 : valarg2;
+                  lua_Number hi = valarg1 < valarg2 ? valarg2 : valarg1;
+                  res = valarg3 < lo ? lo : (hi < valarg3 ? hi : valarg3);
                   break;
               }
       }

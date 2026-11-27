@@ -1,0 +1,5 @@
+add_library(sol2 INTERFACE)
+target_include_directories(sol2 INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(sol2 SYSTEM BEFORE INTERFACE ${CMAKE_CURRENT_LIST_DIR}/sol_config)
+target_compile_definitions(sol2 INTERFACE SOL_NO_EXCEPTIONS=1)
+add_library(sol2::sol2 ALIAS sol2)

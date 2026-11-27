@@ -460,6 +460,8 @@ void engine_init(void) {
 
     if (!cart_rom)
         cart_rom = (uint8_t *)rg_alloc(P8_CART_ROM_SIZE, MEM_SLOW);
+    if (cart_rom == NULL)
+        RG_PANIC("pico8: unable to allocate cart ROM");
     memset(cart_rom, 0, P8_CART_ROM_SIZE);
     cart_rom_len = 0;
 
@@ -560,6 +562,8 @@ extern "C" void engine_prepare_cart_load(void) {
         reset_channel_noise(&channels[c], (uint32_t)c);
     }
 
+    if (cart_rom == NULL)
+        RG_PANIC("pico8: cart ROM unavailable");
     memset(cart_rom, 0, P8_CART_ROM_SIZE);
     cart_rom_len = 0;
 }
@@ -583,23 +587,34 @@ void cartParser(const GameCart* parsingCart) {
 		        (unsigned)rom_len, (unsigned long)checksum);
 	}
 
-	assert(parsingCart->gfx_len <= sizeof(spritesheet.sprite_data));
-	memcpy(spritesheet.sprite_data, parsingCart->gfx, parsingCart->gfx_len);
+	// Clamp section lengths instead of asserting: a hand-edited or partially
+	// downloaded .p8 can carry oversized __gfx__/__gff__/__map__ sections, and
+	// an assert() abort here is indistinguishable from a crash to the user.
+	const uint16_t gfx_len = parsingCart->gfx_len < sizeof(spritesheet.sprite_data)
+	                       ? parsingCart->gfx_len : (uint16_t)sizeof(spritesheet.sprite_data);
+	if (parsingCart->gfx && gfx_len)
+		memcpy(spritesheet.sprite_data, parsingCart->gfx, gfx_len);
 
-	assert(parsingCart->gff_len <= sizeof(spritesheet.flags));
-	memcpy(spritesheet.flags, parsingCart->gff, parsingCart->gff_len);
+	const uint16_t gff_len = parsingCart->gff_len < sizeof(spritesheet.flags)
+	                       ? parsingCart->gff_len : (uint16_t)sizeof(spritesheet.flags);
+	if (parsingCart->gff && gff_len)
+		memcpy(spritesheet.flags, parsingCart->gff, gff_len);
 
-	assert(parsingCart->map_len <= sizeof(map_data));
-	memcpy(map_data, parsingCart->map, parsingCart->map_len);
+	const uint16_t map_len = parsingCart->map_len < sizeof(map_data)
+	                       ? parsingCart->map_len : (uint16_t)sizeof(map_data);
+	if (parsingCart->map && map_len)
+		memcpy(map_data, parsingCart->map, map_len);
 
-        if (parsingCart->gfx_len > (64*128)) { // 64 half-sized lines (128bytes) == 32 256 lines
+        if (parsingCart->gfx && gfx_len > (64*128)) { // 64 half-sized lines (128bytes) == 32 256 lines
                                                // these are LSB and have to be flipped
-            for(uint16_t i=32; i<(parsingCart->gfx_len/256); i++) {
+            for(uint16_t i=32; i<(gfx_len/256); i++) {
                 mapParser(parsingCart->gfx+(i*256), i, map_data);
             }
         }
-        for(uint8_t i=0; i<(parsingCart->sfx_len/168); i++) {
+        if (parsingCart->sfx) {
+            for(uint8_t i=0; i<(parsingCart->sfx_len/168); i++) {
                 SFXParser(parsingCart->sfx+(i*168), i, sfx);
+            }
         }
         memset(music_patterns, 0x40, sizeof(music_patterns));
         if (parsingCart->music) {
@@ -1129,10 +1144,14 @@ void flip(bool draw_frame) {
     // through stepping alone.
     static int frame_count = 0;
     int fc = frame_count++;
-    if ((fc & 63) == 0) {
-        lua_gc(L, LUA_GCSTEP, 4);
-    } else if ((fc & 1023) == 0) {
+    // Full collect every ~1024 frames must be tested first: the old
+    // `if ((fc & 63) == 0) ... else if ((fc & 1023) == 0)` order made the
+    // collect unreachable (every 1024 is also a multiple of 64), so the
+    // periodic sweep never ran and long-lived garbage only ever got stepped.
+    if ((fc & 1023) == 0) {
         lua_gc(L, LUA_GCCOLLECT, 0);
+    } else if ((fc & 63) == 0) {
+        lua_gc(L, LUA_GCSTEP, 4);
     }
     // _init_done lives at module scope so engine_init() can reset it
     // (see the file-scope declaration near the top of this TU).
@@ -1155,7 +1174,9 @@ void flip(bool draw_frame) {
     }
 
     const bool update60 = _lua_fn_exists("_update60");
-    update_button_repeat(engine_frame_rate() == 60);
+    // engine_frame_rate() would do another global lookup for _update60 every
+    // frame; the value was just fetched above, so reuse it directly.
+    update_button_repeat(update60);
 
     // Some valid carts perform menu/control work from _draw() rather than
     // _update() (PICO-BALL's launcher does this). If frameskip suppresses the
@@ -1173,9 +1194,12 @@ void flip(bool draw_frame) {
         }
     }
 
+    // _to_lua_call() already pops a non-function global silently, so the
+    // separate _lua_fn_exists() probes here are redundant: each one cost an
+    // extra global hash lookup per frame for every callback.
     if (update60) {
         (void)_to_lua_call("_update60");
-    } else if (_lua_fn_exists("_update")) {
+    } else {
         (void)_to_lua_call("_update");
     }
     if (cart_runtime_failed) {
@@ -1183,11 +1207,9 @@ void flip(bool draw_frame) {
         return;
     }
 
-    if (_lua_fn_exists("_draw")) {
-        if (engine_draw_frame) {
-            (void)_to_lua_call("_draw");
-        }
-    }
+    // _to_lua_call() returns immediately for "_draw" when this frame is being
+    // skipped, and silently ignores a missing _draw, so no existence probe.
+    (void)_to_lua_call("_draw");
 
     if (engine_draw_frame) {
         gfx_flip();

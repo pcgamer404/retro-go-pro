@@ -1,6 +1,10 @@
 package javax.microedition.media;
 
 import java.util.Vector;
+import javax.microedition.media.control.MIDIControl;
+import javax.microedition.media.control.PitchControl;
+import javax.microedition.media.control.RateControl;
+import javax.microedition.media.control.TempoControl;
 import javax.microedition.media.control.ToneControl;
 import javax.microedition.media.control.VolumeControl;
 
@@ -28,6 +32,10 @@ class PlayerImpl implements Player {
     private int handle;
     private final Vector listeners = new Vector();
     private final Volume volume = new Volume();
+    private final Rate rate = new Rate();
+    private final Tempo tempo = new Tempo();
+    private final Midi midi = new Midi();
+    private final Pitch pitch = new Pitch();
     private Tone tone;
 
     PlayerImpl(byte[] data, String contentType) {
@@ -37,7 +45,7 @@ class PlayerImpl implements Player {
         if (tonePlayer) {
             tone = new Tone();
         }
-        duration = data == null && tonePlayer ? 0 : MediaInfo.duration(data, contentType);
+        duration = data == null && tonePlayer ? 0 : -2;
     }
 
     /* ---- Controls ---- */
@@ -108,12 +116,126 @@ class PlayerImpl implements Player {
         }
     }
 
+    class Rate implements RateControl {
+        int rate = 100000;
+
+        public int setRate(int millirate) {
+            if (millirate <= 0) {
+                throw new IllegalArgumentException("rate must be positive");
+            }
+            rate = millirate;
+            return rate;
+        }
+
+        public int getRate() {
+            return rate;
+        }
+    }
+
+    final class Tempo extends Rate implements TempoControl {
+        int tempo = 120000;
+
+        public int setTempo(int milliTempo) {
+            if (milliTempo <= 0) {
+                throw new IllegalArgumentException("tempo must be positive");
+            }
+            tempo = milliTempo;
+            return tempo;
+        }
+
+        public int getTempo() {
+            return tempo;
+        }
+    }
+
+    final class Midi implements MIDIControl {
+        public boolean isBankQuerySupported() {
+            return false;
+        }
+
+        public int[] getProgram(int channel) throws MediaException {
+            checkChannel(channel);
+            return new int[] {0, 0};
+        }
+
+        public int getChannelVolume(int channel) {
+            checkChannel(channel);
+            return 100;
+        }
+
+        public void setProgram(int channel, int bank, int program) {
+            checkChannel(channel);
+            if (bank < 0 || bank > 16383 || program < 0 || program > 127) {
+                throw new IllegalArgumentException("invalid bank or program");
+            }
+        }
+
+        public void setChannelVolume(int channel, int volume) {
+            checkChannel(channel);
+            if (volume < 0 || volume > 127) {
+                throw new IllegalArgumentException("invalid volume");
+            }
+        }
+
+        public int[] getBankList(boolean custom) throws MediaException {
+            return new int[] {0};
+        }
+
+        public int[] getProgramList(int bank) throws MediaException {
+            if (bank < 0 || bank > 16383) {
+                throw new IllegalArgumentException("invalid bank");
+            }
+            return new int[0];
+        }
+
+        public void shortMidiEvent(int type, int data1, int data2) {
+            if (type < 0x80 || type > 0xff) {
+                throw new IllegalArgumentException("invalid MIDI event");
+            }
+        }
+
+        public int longMidiEvent(byte[] data, int offset, int length) {
+            if (data == null) {
+                throw new NullPointerException();
+            }
+            if (offset < 0 || length < 0 || offset > data.length - length) {
+                throw new IllegalArgumentException("invalid range");
+            }
+            return length;
+        }
+
+        private void checkChannel(int channel) {
+            if (channel < 0 || channel > 15) {
+                throw new IllegalArgumentException("invalid channel");
+            }
+        }
+    }
+
+    final class Pitch implements PitchControl {
+        int pitch;
+
+        public int setPitch(int millisemitones) {
+            int clamped = millisemitones;
+            if (clamped < -12000) {
+                clamped = -12000;
+            } else if (clamped > 12000) {
+                clamped = 12000;
+            }
+            pitch = clamped;
+            return pitch;
+        }
+
+        public int getPitch() {
+            return pitch;
+        }
+    }
+
     public Control[] getControls() {
         checkRealized();
         if (tonePlayer) {
-            return new Control[] {volume, tone};
+            return new Control[] {volume, tone, rate, tempo, midi, pitch};
         }
-        return new Control[] {volume};
+        return new Control[] {volume, rate, tempo, midi, pitch};
     }
 
     public Control getControl(String controlType) {
@@ -130,6 +252,18 @@ class PlayerImpl implements Player {
         }
         if (t.equals("ToneControl") && tonePlayer) {
             return tone;
+        }
+        if (t.equals("RateControl")) {
+            return rate;
+        }
+        if (t.equals("TempoControl")) {
+            return tempo;
+        }
+        if (t.equals("MIDIControl")) {
+            return midi;
+        }
+        if (t.equals("PitchControl")) {
+            return pitch;
         }
         return null;
     }
@@ -282,6 +416,9 @@ class PlayerImpl implements Player {
 
     public synchronized long getDuration() {
         checkClosed();
+        if (duration == -2) {
+            duration = MediaInfo.duration(data, contentType);
+        }
         return duration;
     }
 

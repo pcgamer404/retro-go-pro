@@ -20,7 +20,7 @@ void *nj_alloc(size_t n)
 /* Metadata (classes, methods, symbols) lives as long as the VM, so it is
  * carved out of large blocks to avoid per-allocation malloc overhead. All
  * blocks are chained so nj_meta_free_all() can release them at shutdown. */
-#define META_BLOCK 16384
+#define META_BLOCK 4096
 
 typedef union MetaBlock {
     union MetaBlock *next;
@@ -31,9 +31,14 @@ static MetaBlock *meta_blocks;
 static char      *meta_cur;
 static size_t     meta_left;
 
-static void *meta_block(size_t n)
+static void *meta_block(size_t n, bool fatal)
 {
-    MetaBlock *b = nj_alloc(sizeof(MetaBlock) + n);
+    MetaBlock *b = nj_pal_calloc(1, sizeof(MetaBlock) + n);
+    if (!b) {
+        if (fatal)
+            nj_fatal("out of native memory (%u bytes)", (unsigned)(sizeof(MetaBlock) + n));
+        return NULL;
+    }
     b->next = meta_blocks;
     meta_blocks = b;
     return b + 1;
@@ -54,10 +59,21 @@ void *nj_meta(size_t n)
 {
     n = (n + 7) & ~(size_t)7;
     if (n > META_BLOCK / 4)
-        return meta_block(n);
+        return meta_block(n, true);
     if (n > meta_left) {
-        meta_cur = meta_block(META_BLOCK);
-        meta_left = META_BLOCK;
+        size_t try_sizes[] = { META_BLOCK, META_BLOCK / 2, META_BLOCK / 4, n };
+        void *p = NULL;
+        size_t got = 0;
+        for (int i = 0; i < 4; i++) {
+            if (try_sizes[i] < n) continue;
+            p = meta_block(try_sizes[i], i == 3);
+            if (p) {
+                got = try_sizes[i];
+                break;
+            }
+        }
+        meta_cur = p;
+        meta_left = got;
     }
     void *p = meta_cur;
     meta_cur += n;

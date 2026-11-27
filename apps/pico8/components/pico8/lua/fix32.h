@@ -301,7 +301,12 @@ struct fix32
 
     static inline fix32 sin(fix32 angle) {
         // https://www.nullhardware.com/blog/fixed-point-sine-and-cosine-for-embedded-systems/
-        int16_t i = -1 * (angle << 15);
+        // `angle` is in PICO-8 turns (0..1 == full circle). The shift below
+        // wraps the fractional part into the full int32 range, which is what
+        // the curve-fit expects. Do NOT negate this: an earlier port had
+        // `-1 * (angle << 15)` here, which returned -sin() for the whole
+        // circle (sin(0.25) == -1) and forced cos() to compensate with +0.75.
+        int16_t i = angle << 15;
         /* Convert (signed) input to a value between 0 and 8192. (8192 is pi/2, which is the region of the curve fit). */
         /* ------------------------------------------------------------------- */
         i <<= 1;
@@ -336,7 +341,9 @@ struct fix32
     }
 
     static inline fix32 cos(fix32 angle) {
-        return sin(angle+z8::fix32(0.75f));
+        // cos(x) == sin(x + a quarter turn). With the corrected sine, +0.75
+        // would invert the result, so this must stay +0.25.
+        return sin(angle + z8::fix32(0.25f));
     }
 
 private:

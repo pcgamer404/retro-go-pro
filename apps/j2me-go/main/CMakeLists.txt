@@ -19,7 +19,7 @@ set(COMPONENT_ADD_INCLUDEDIRS
     "nanojava/src/pal"
 )
 set(COMPONENT_REQUIRES "retro-go")
-set(COMPONENT_PRIV_REQUIRES "freertos esp_timer")
+set(COMPONENT_PRIV_REQUIRES "freertos esp_timer esp_mm heap")
 set(COMPONENT_EMBED_FILES "nanojava_classlib.jar")
 
 register_component()
@@ -28,3 +28,4 @@ rg_setup_compile_options(
     -Wno-error
     -Wno-format-truncation -Wno-stringop-truncation -Wno-format-overflow
 )
+

@@ -442,7 +442,7 @@ public class RecordStore {
             throws RecordStoreNotOpenException, InvalidRecordIDException, RecordStoreException {
         checkOpen();
         byte[] d = data[indexOf(recordId)];
-        return d.length == 0 ? null : copy(d, 0, d.length);
+        return d.length == 0 ? new byte[0] : copy(d, 0, d.length);
     }
 
     public synchronized int getRecord(int recordId, byte[] buffer, int offset)

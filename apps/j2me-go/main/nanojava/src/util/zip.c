@@ -7,6 +7,10 @@
 #include "zip.h"
 #include "inflate.h"
 
+#ifdef ESP_PLATFORM
+#include "miniz.h"
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -185,39 +189,126 @@ ZipEntry *zip_entry(Zip *z, uint32_t index)
     return index < z->n ? &z->entries[index] : NULL;
 }
 
-uint8_t *zip_read(Zip *z, ZipEntry *e, uint32_t *len)
+#ifdef ESP_PLATFORM
+typedef struct {
+    tinfl_decompressor decomp;
+    uint8_t chunk[2048];
+} ZipStreamCtx;
+
+static ZipStreamCtx s_zip_stream_ctx;
+
+static int32_t zip_read_deflated_stream(Zip *z, uint32_t data_off, uint32_t csize, uint8_t *dst, uint32_t usize)
 {
+    ZipStreamCtx *ctx = &s_zip_stream_ctx;
+    tinfl_init(&ctx->decomp);
+
+    uint32_t in_file_off = data_off;
+    uint32_t in_remaining = csize;
+    size_t in_pos = 0, in_len = 0;
+    size_t out_pos = 0;
+    int32_t result = -1;
+
+    while (out_pos < usize) {
+        if (in_pos == in_len) {
+            if (in_remaining == 0)
+                break;
+            uint32_t to_read = in_remaining < sizeof(ctx->chunk) ? in_remaining : (uint32_t)sizeof(ctx->chunk);
+            if (read_at(z, in_file_off, ctx->chunk, to_read) != 0)
+                break;
+            in_file_off += to_read;
+            in_remaining -= to_read;
+            in_pos = 0;
+            in_len = to_read;
+        }
+
+        size_t in_bytes = in_len - in_pos;
+        size_t out_bytes = usize - out_pos;
+        mz_uint32 flags = TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+        if (in_remaining > 0)
+            flags |= TINFL_FLAG_HAS_MORE_INPUT;
+
+        tinfl_status status = tinfl_decompress(
+            &ctx->decomp,
+            ctx->chunk + in_pos, &in_bytes,
+            dst, dst + out_pos, &out_bytes,
+            flags
+        );
+
+        in_pos += in_bytes;
+        out_pos += out_bytes;
+
+        if (status == TINFL_STATUS_DONE || out_pos >= usize) {
+            result = (int32_t)out_pos;
+            break;
+        }
+        if (status < 0) {
+            break;
+        }
+    }
+
+    return result;
+}
+#endif
+
+/* Uncompress an entry straight into a caller-supplied buffer.  A stored
+ * (method 0) entry is read with one I/O call and no intermediate copy, which
+ * matters when a loading screen pulls hundreds of bitmaps; a deflated entry
+ * still needs the compressed bytes in memory, but its output never gets a
+ * second copy either.  Returns the byte count, or -1 on error. */
+int32_t zip_read_into(Zip *z, ZipEntry *e, uint8_t *dst, uint32_t cap)
+{
+    if (e->usize > cap)
+        return -1;
     uint8_t hdr[30];
     if (read_at(z, e->local_off, hdr, 30) != 0 || le32(hdr) != 0x04034b50)
-        return NULL;
+        return -1;
     uint32_t data_off = e->local_off + 30 + le16(hdr + 26) + le16(hdr + 28);
 
+    if (e->method == 0) {
+        if (e->usize && read_at(z, data_off, dst, e->usize) != 0)
+            return -1;
+        return (int32_t)e->usize;
+    }
+    if (e->method == 8) {
+        if (z->mem) {
+            if (data_off > z->size || e->csize > z->size - data_off)
+                return -1;
+            if (nj_inflate(dst, e->usize, z->mem + data_off, e->csize) == (int32_t)e->usize)
+                return (int32_t)e->usize;
+            return -1;
+        }
+        uint8_t *in = nj_pal_malloc(e->csize ? e->csize : 1);
+        if (in) {
+            int32_t r = -1;
+            if (read_at(z, data_off, in, e->csize) == 0 &&
+                nj_inflate(dst, e->usize, in, e->csize) == (int32_t)e->usize)
+                r = (int32_t)e->usize;
+            nj_pal_free(in);
+            if (r >= 0)
+                return r;
+        }
+#ifdef ESP_PLATFORM
+        return zip_read_deflated_stream(z, data_off, e->csize, dst, e->usize);
+#else
+        return -1;
+#endif
+    }
+    return -1;
+}
+
+uint8_t *zip_read(Zip *z, ZipEntry *e, uint32_t *len)
+{
     uint8_t *out = nj_pal_malloc(e->usize + 1);
     if (!out)
         return NULL;
-    if (e->method == 0) {
-        if (read_at(z, data_off, out, e->usize) != 0)
-            goto fail;
-    } else if (e->method == 8) {
-        uint8_t *in = nj_pal_malloc(e->csize ? e->csize : 1);
-        if (!in)
-            goto fail;
-        if (read_at(z, data_off, in, e->csize) != 0 ||
-            nj_inflate(out, e->usize, in, e->csize) != (int32_t)e->usize) {
-            nj_pal_free(in);
-            goto fail;
-        }
-        nj_pal_free(in);
-    } else {
-        goto fail;
+    if (zip_read_into(z, e, out, e->usize) < 0) {
+        nj_pal_free(out);
+        return NULL;
     }
     out[e->usize] = 0;
     if (len)
         *len = e->usize;
     return out;
-fail:
-    nj_pal_free(out);
-    return NULL;
 }
 
 uint8_t *zip_read_name(Zip *z, const char *name, uint32_t *len)

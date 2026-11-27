@@ -64,6 +64,7 @@ GAME( 1992, wofm, wof, qsound, wof, wof, ROT0, "Capcom", "Warriors of Fate (Worl
 GAME( 1992, wofu, wof, qsound, wof, wof, ROT0, "Capcom", "Warriors of Fate (USA 921031) (modern set)" )
 GAME( 1992, sf2hf, sf2ce, sf2, sf2, 0, ROT0, "Capcom", "Street Fighter II': Hyper Fighting (World 921209) (modern set)" )
 GAME( 1992, sf2hfu, sf2ce, sf2, sf2, 0, ROT0, "Capcom", "Street Fighter II': Hyper Fighting (USA 921209) (modern set)" )
+GAME( 1993, dinom, dino, qsound, dino, dino, ROT0, "Capcom", "Cadillacs and Dinosaurs (World 930201) (modern set)" )
 GAME( 1993, dinou, dino, qsound, dino, dino, ROT0, "Capcom", "Cadillacs and Dinosaurs (USA 930201) (modern set)" )
 GAME( 1993, dinoa, dino, qsound, dino, dino, ROT0, "Capcom", "Cadillacs and Dinosaurs (Asia TW 930223) (modern set)" )
 GAME( 1993, punisheru, punisher, qsound, punisher, punisher, ROT0, "Capcom", "The Punisher (USA 930422) (modern set)" )

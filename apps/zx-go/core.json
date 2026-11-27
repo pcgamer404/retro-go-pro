@@ -1,0 +1,7 @@
+{
+  "id": "zx-go",
+  "title": "Sinclair ZX Spectrum",
+  "launch_mode": "rom",
+  "rom_extensions": ["z80", "sna", "tap", "tzx", "zip"],
+  "rom_folder": "spectrum"
+}

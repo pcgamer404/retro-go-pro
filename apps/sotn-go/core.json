@@ -1,0 +1,7 @@
+{
+  "id": "sotn-go",
+  "title": "Castlevania: SotN",
+  "launch_mode": "direct",
+  "rom_extensions": ["txt"],
+  "rom_folder": "sotn"
+}

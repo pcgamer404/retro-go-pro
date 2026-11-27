@@ -115,7 +115,12 @@ Common::String OSystem_RG::getSystemLanguage() const { return "en_US"; }
 Common::String OSystem_RG::getDefaultConfigFileName() { return _configFile; }
 
 void OSystem_RG::quit() {
-	rgx_exit();
+	// Engines call this from error paths and from Engine::quitGame(). Retro-Go's
+	// rgx_exit() switches back to the launcher by restarting the device, which
+	// never returns: scummvm_run() would not get to return its error code and the
+	// alerts in main.c could never be shown. Stop the audio task here instead and
+	// let scummvm_run()/main.c decide when to leave the app.
+	rgx_audio_stop();
 }
 
 // ------------------------------------------------------------------ audio
@@ -159,9 +164,16 @@ void OSystem_RG::initSize(uint width, uint height, const Graphics::PixelFormat *
 		return;
 
 	free(_gamePixels);
-	_gameWidth = width;
-	_gameHeight = height;
-	_gamePixels = (byte *)calloc(width * height, 1);
+	_gamePixels = (byte *)calloc((size_t)width * height, 1);
+	_gameWidth = _gamePixels ? width : 0;
+	_gameHeight = _gamePixels ? height : 0;
+	if (!_gamePixels) {
+		// Without a framebuffer every draw path is a no-op; keep updateScreen() in
+		// its "nothing to show" branch instead of memcpy'ing from NULL.
+		warning("RG backend: no memory for a %ux%u screen", width, height);
+		_gameDirty = false;
+		return;
+	}
 	_cursorX = width / 2;
 	_cursorY = height / 2;
 	_fx = (float)_cursorX;
@@ -252,6 +264,10 @@ void OSystem_RG::updateScreen() {
 	}
 
 	byte *dst = rgx_video_pixels();
+	if (!dst) {
+		_gameDirty = false;
+		return;
+	}
 	memcpy(dst, _gamePixels, (size_t)_gameWidth * _gameHeight);
 	if (_cursorVisible && _cursorBuf)
 		drawCursor(dst);

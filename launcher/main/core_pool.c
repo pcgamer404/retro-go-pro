@@ -365,6 +365,42 @@ static bool manifest_read_v1(int slot, core_manifest_v1_t *out)
     return true;
 }
 
+/* SD copy of the manifest. The two flash copies live in the pool's first two sectors, which a
+ * core that writes its own area of the partition can erase (or a reset at the wrong moment), so
+ * the launcher keeps a third copy on the SD card and puts the list back when both flash copies
+ * are gone. Best effort: no card, no change. */
+#define CORE_SD_BACKUP CORE_SD_FOLDER "/manifest.bak"
+
+static void core_backup_save(void)
+{
+    if (!pool || !manifest.magic)
+        return;
+    if (!rg_storage_write_file(CORE_SD_BACKUP, &manifest, sizeof(manifest), RG_FILE_ATOMIC_WRITE))
+        RG_LOGW("Could not write the core manifest backup");
+}
+
+/* Returns true and fills `manifest` when the file holds a sane manifest. */
+static bool core_backup_load(void)
+{
+    void *data = NULL;
+    size_t size = 0;
+    if (!rg_storage_read_file(CORE_SD_BACKUP, &data, &size, 0))
+        return false;
+    bool ok = data && size == sizeof(manifest);
+    if (ok)
+    {
+        const core_manifest_t *m = data;
+        ok = m->magic == CORE_MANIFEST_MAGIC && m->version == CORE_MANIFEST_VERSION &&
+             m->count <= CORE_MAX_ENTRIES && m->selected < (int)m->count && crc_of(m) == m->crc;
+    }
+    if (ok)
+        memcpy(&manifest, data, sizeof(manifest));
+    else if (data)
+        RG_LOGW("Ignoring a damaged core manifest backup");
+    free(data);
+    return ok;
+}
+
 /* Writes to the copy that is not in use, so a power loss mid-save leaves the previous manifest
  * intact. */
 static bool manifest_flush(void)
@@ -381,6 +417,7 @@ static bool manifest_flush(void)
         ESP_OK)
         return false;
     manifest_slot = slot;
+    core_backup_save();
     return true;
 }
 
@@ -435,49 +472,89 @@ void core_pool_init(void)
         }
         if (old_slot < 0)
         {
-            RG_LOGW("Core pool is unformatted (%u KB)", (unsigned)(pool->size / 1024));
-            manifest_reset();
-            return;
-        }
-        /* Upgrade in place: the only new information is each entry's asset area, which
- * the install-time table still knows. */
-        manifest_reset();
-        manifest.seq = best_old.seq;
-        manifest.selected = best_old.selected;
-        manifest.count = RG_MIN(best_old.count, (uint32_t)CORE_MAX_ENTRIES);
-        manifest_slot = old_slot;
-        /* flush to the other copy */ for (uint32_t i = 0; i < manifest.count; i++)
-        {
-            const core_entry_v1_t *s = &best_old.entries[i];
-            core_entry_t *e = &manifest.entries[i];
-            uint32_t start = 0, end = 0;
-            memcpy(e->name, s->name, sizeof(e->name));
-            memcpy(e->title, s->title, sizeof(e->title));
-            memcpy(e->version, s->version, sizeof(e->version));
-            memcpy(e->date, s->date, sizeof(e->date));
-            memcpy(e->time, s->time, sizeof(e->time));
-            e->offset = s->offset;
-            e->size = s->size;
-            e->crc32 = s->crc32;
-            e->flags = s->flags;
-            if (store_range_for(e->name, &start, &end))
+            /* Both flash copies are gone (wiped sectors, a core that erased the head of its own
+             * partition, a reset between the erase and the write). Put the list back from the SD
+             * copy if there is one: the images live further into the pool and are still there. */
+            if (core_backup_load())
             {
-                e->reserve_offset = start;
-                e->reserve_size = end - start;
+                /* The backup outlives a full image flash, so keep only the entries whose image
+                 * is still in the pool: everything else would just fail to boot. */
+                uint32_t kept = 0;
+                for (uint32_t i = 0; i < manifest.count; i++)
+                {
+                    core_entry_t *e = &manifest.entries[i];
+                    uint8_t magic = 0;
+                    if (e->offset >= CORE_MANIFEST_RESERVED && (uint64_t)e->offset + e->size <= pool->size &&
+                        esp_partition_read(pool, e->offset, &magic, 1) == ESP_OK &&
+                        magic == CORE_IMAGE_MAGIC)
+                        manifest.entries[kept++] = *e;
+                }
+                if (kept != manifest.count)
+                    RG_LOGW("Core manifest restore: %u of %u image(s) still present",
+                            (unsigned)kept, (unsigned)manifest.count);
+                manifest.count = kept;
+                manifest.selected = -1;
+                if (manifest_flush())
+                {
+                    RG_LOGW("Core manifest was missing, restored %u core(s) from %s",
+                            (unsigned)manifest.count, CORE_SD_BACKUP);
+                }
+            }
+            else
+            {
+                RG_LOGW("Core pool is unformatted (%u KB)", (unsigned)(pool->size / 1024));
+                manifest_reset();
+                return;
             }
         }
-        if (!manifest_flush())
+        else
         {
-            RG_LOGE("Failed to upgrade the core manifest");
+            /* Upgrade in place: the only new information is each entry's asset area, which
+             * the install-time table still knows. */
             manifest_reset();
-            return;
+            manifest.seq = best_old.seq;
+            manifest.selected = best_old.selected;
+            manifest.count = RG_MIN(best_old.count, (uint32_t)CORE_MAX_ENTRIES);
+            manifest_slot = old_slot;
+            /* flush to the other copy */
+            for (uint32_t i = 0; i < manifest.count; i++)
+            {
+                const core_entry_v1_t *s = &best_old.entries[i];
+                core_entry_t *e = &manifest.entries[i];
+                uint32_t start = 0, end = 0;
+                memcpy(e->name, s->name, sizeof(e->name));
+                memcpy(e->title, s->title, sizeof(e->title));
+                memcpy(e->version, s->version, sizeof(e->version));
+                memcpy(e->date, s->date, sizeof(e->date));
+                memcpy(e->time, s->time, sizeof(e->time));
+                e->offset = s->offset;
+                e->size = s->size;
+                e->crc32 = s->crc32;
+                e->flags = s->flags;
+                if (store_range_for(e->name, &start, &end))
+                {
+                    e->reserve_offset = start;
+                    e->reserve_size = end - start;
+                }
+            }
+            if (!manifest_flush())
+            {
+                RG_LOGE("Failed to upgrade the core manifest");
+                manifest_reset();
+                return;
+            }
+            RG_LOGI("Core manifest upgraded to version %u", CORE_MANIFEST_VERSION);
         }
-        RG_LOGI("Core manifest upgraded to version %u", CORE_MANIFEST_VERSION);
     }
     else
     {
         manifest = best;
         manifest_slot = best_slot;
+        /* A save that was cut short leaves the other copy blank. Rewrite it now so that the next
+         * interrupted save cannot take the only valid copy with it. */
+        core_manifest_t other;
+        if (!manifest_read(best_slot ^ 1, &other))
+            manifest_flush();
     }
     if (manifest.count > CORE_MAX_ENTRIES)
     {

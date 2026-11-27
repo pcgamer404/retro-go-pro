@@ -33,6 +33,13 @@ public class Connector {
         if (mode != READ && mode != WRITE && mode != READ_WRITE) {
             throw new IllegalArgumentException("invalid mode");
         }
+        if (name.startsWith("file:")) {
+            return new javax.microedition.io.file.FileConnectionImpl(name, mode);
+        }
+        if (name.startsWith("sms:") || name.startsWith("mms:")
+                || name.startsWith("cbs:")) {
+            return new javax.wireless.messaging.MessageConnectionImpl(name);
+        }
         String path;
         if (name.startsWith("resource://")) {
             path = name.substring("resource://".length());

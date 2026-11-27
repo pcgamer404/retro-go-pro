@@ -129,9 +129,17 @@ static bool unfilter(uint8_t *row, const uint8_t *prev, size_t n, int bpp, int t
             row[i] = (uint8_t)(row[i] + row[i - bpp]);
         break;
     case 2:
-        if (prev)
-            for (size_t i = 0; i < n; i++)
+        if (prev) {
+            size_t i = 0;
+            for (; i + 4 <= n; i += 4) {
+                row[i]     = (uint8_t)(row[i]     + prev[i]);
+                row[i + 1] = (uint8_t)(row[i + 1] + prev[i + 1]);
+                row[i + 2] = (uint8_t)(row[i + 2] + prev[i + 2]);
+                row[i + 3] = (uint8_t)(row[i + 3] + prev[i + 3]);
+            }
+            for (; i < n; i++)
                 row[i] = (uint8_t)(row[i] + prev[i]);
+        }
         break;
     case 3:
         for (size_t i = 0; i < n; i++) {
@@ -165,16 +173,66 @@ static int sample(const uint8_t *row, int i, int depth)
     }
 }
 
+/* Scale a sample of `depth` bits to 0..255.  8-bit is by far the common case
+ * and needs no division at all; 16-bit PNGs are virtually always 257*v, so a
+ * shift is the usual RGB565-style reduction.  Only the packed 1/2/4-bit
+ * formats keep the exact division, and those rows are tiny. */
+static inline uint32_t scale_sample(int v, int depth)
+{
+    if (depth == 8)
+        return (uint32_t)v;
+    if (depth == 16)
+        return (uint32_t)(v >> 8);
+    return (uint32_t)(v * 255 / ((1 << depth) - 1));
+}
+
 static void convert(const Png *p, const uint8_t *row, int n, uint32_t *out)
 {
     int d = p->depth;
-    int max = (1 << d) - 1;
+
+    /* Fast-path: 8-bit Indexed Palette (Color type 3) - most common in J2ME games */
+    if (p->ctype == 3 && d == 8) {
+        for (int x = 0; x < n; x++)
+            out[x] = p->palette[row[x]];
+        return;
+    }
+
+    /* Fast-path: 8-bit RGBA Truecolor with alpha (Color type 6) */
+    if (p->ctype == 6 && d == 8) {
+        const uint8_t *src = row;
+        for (int x = 0; x < n; x++) {
+            out[x] = ((uint32_t)src[3] << 24) | ((uint32_t)src[0] << 16) | ((uint32_t)src[1] << 8) | (uint32_t)src[2];
+            src += 4;
+        }
+        return;
+    }
+
+    /* Fast-path: 8-bit RGB Truecolor without alpha (Color type 2) */
+    if (p->ctype == 2 && d == 8) {
+        const uint8_t *src = row;
+        if (p->has_trns) {
+            uint16_t tr = p->trns_r, tg = p->trns_g, tb = p->trns_b;
+            for (int x = 0; x < n; x++) {
+                uint32_t r = src[0], g = src[1], b = src[2];
+                src += 3;
+                uint32_t a = (r == tr && g == tg && b == tb) ? 0 : 255u;
+                out[x] = (a << 24) | (r << 16) | (g << 8) | b;
+            }
+        } else {
+            for (int x = 0; x < n; x++) {
+                out[x] = 0xFF000000u | ((uint32_t)src[0] << 16) | ((uint32_t)src[1] << 8) | (uint32_t)src[2];
+                src += 3;
+            }
+        }
+        return;
+    }
+
     for (int x = 0; x < n; x++) {
         uint32_t a = 255, r, g, b;
         switch (p->ctype) {
         case 0: {
             int v = sample(row, x, d);
-            r = g = b = (uint32_t)(v * 255 / max);
+            r = g = b = scale_sample(v, d);
             if (p->has_trns && v == p->trns_gray)
                 a = 0;
             break;
@@ -183,23 +241,23 @@ static void convert(const Png *p, const uint8_t *row, int n, uint32_t *out)
             int vr = sample(row, x * 3, d), vg = sample(row, x * 3 + 1, d), vb = sample(row, x * 3 + 2, d);
             if (p->has_trns && vr == p->trns_r && vg == p->trns_g && vb == p->trns_b)
                 a = 0;
-            r = (uint32_t)(vr * 255 / max);
-            g = (uint32_t)(vg * 255 / max);
-            b = (uint32_t)(vb * 255 / max);
+            r = scale_sample(vr, d);
+            g = scale_sample(vg, d);
+            b = scale_sample(vb, d);
             break;
         }
         case 3:
             out[x] = p->palette[sample(row, x, d) & 255];
             continue;
         case 4:
-            r = g = b = (uint32_t)(sample(row, x * 2, d) * 255 / max);
-            a = (uint32_t)(sample(row, x * 2 + 1, d) * 255 / max);
+            r = g = b = scale_sample(sample(row, x * 2, d), d);
+            a = scale_sample(sample(row, x * 2 + 1, d), d);
             break;
         default:
-            r = (uint32_t)(sample(row, x * 4, d) * 255 / max);
-            g = (uint32_t)(sample(row, x * 4 + 1, d) * 255 / max);
-            b = (uint32_t)(sample(row, x * 4 + 2, d) * 255 / max);
-            a = (uint32_t)(sample(row, x * 4 + 3, d) * 255 / max);
+            r = scale_sample(sample(row, x * 4, d), d);
+            g = scale_sample(sample(row, x * 4 + 1, d), d);
+            b = scale_sample(sample(row, x * 4 + 2, d), d);
+            a = scale_sample(sample(row, x * 4 + 3, d), d);
             break;
         }
         out[x] = (a << 24) | (r << 16) | (g << 8) | b;

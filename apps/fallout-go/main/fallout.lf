@@ -1,0 +1,20 @@
+[sections:fallout_sbss]
+entries:
+    .sbss+
+    .scommon+
+
+[scheme:fallout_psram_scheme]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+    fallout_sbss -> extern_ram
+
+[mapping:fallout1_psram_mapping]
+archive: libfallout1.a
+entries:
+    * (fallout_psram_scheme)
+
+[mapping:fallout2_psram_mapping]
+archive: libfallout2.a
+entries:
+    * (fallout_psram_scheme)

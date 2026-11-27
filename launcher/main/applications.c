@@ -4,6 +4,10 @@
 #include <ctype.h>
 #include <string.h>
 #include <errno.h>
+#ifdef ESP_PLATFORM
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
 
 #include "applications.h"
 #include "bookmarks.h"
@@ -155,6 +159,35 @@ static const char *get_file_path(retro_file_t *file)
     return buffer;
 }
 
+struct rg_task_s
+{
+    void (*func)(void *arg);
+    void *arg;
+    size_t queueDepth;
+#ifdef ESP_PLATFORM
+    QueueHandle_t queue;
+    TaskHandle_t handle;
+#else
+    rg_task_msg_t msg;
+    int msgWaiting;
+    void *handle;
+#endif
+    char name[16];
+};
+
+static void safe_switch_app(const char *partition, const char *name, const char *args, int save_slot, uint32_t flags)
+{
+    rg_task_t *sysmon = rg_task_find("rg_sysmon");
+    if (sysmon && sysmon->handle) {
+        RG_LOGI("safe_switch_app: deleting sysmon task %p", sysmon->handle);
+#ifdef ESP_PLATFORM
+        vTaskDelete(sysmon->handle);
+#endif
+        sysmon->handle = NULL;
+    }
+    rg_system_switch_app(partition, name, args, save_slot, flags);
+}
+
 static void application_start(retro_file_t *file, int load_state)
 {
     RG_ASSERT_ARG(file);
@@ -163,7 +196,7 @@ static void application_start(retro_file_t *file, int load_state)
     char *path = strdup(get_file_path(file));
     int flags = (gui.startup_mode ? RG_BOOT_ONCE : 0) | (load_state != -1 ? RG_BOOT_RESUME : 0);
     bookmark_add(BOOK_TYPE_RECENT, file); // This could relocate *file, but we no longer need it
-    rg_system_switch_app(part, name, path, load_state, flags);
+    safe_switch_app(part, name, path, load_state, flags);
 }
 
 static uint32_t crc_read_file(retro_file_t *file, bool interactive)
@@ -498,7 +531,7 @@ static void event_handler(gui_event_t event, tab_t *tab)
                 char *name = strdup(app->short_name);
                 char *args = strdup(app->paths.roms);
                 int flags = gui.startup_mode ? RG_BOOT_ONCE : 0;
-                rg_system_switch_app(part, name, args, -1, flags);
+                safe_switch_app(part, name, args, -1, flags);
             }
         }
     }
@@ -841,21 +874,24 @@ static void applications_add_installed_cores(void)
 }
 
 void applications_init(void) {
-  application("Nintendo Gameboy Advance", "gba", "gba zip", "gbsp", 0);
-  application("Neo Geo Pocket", "ngp", "ngp ngc zip", "ngp-go", 0);
-  application("Super Mario 64", "n64", "z64 zip", "sm64-go", 0);
-  application("Mario Kart 64", "n64", "z64 zip", "mk64-go", 0);
-  application("Store", "store", "none", "store", 0);
-  application("Jazz Jackrabbit", "openjazz", "jazz", "openjazz", 0);
-  application("DevilutionX-go", "diablo", "diablo", "devilutionx-go", 0);
-  application("J2ME", "jar", "jar", "j2me-go", 0);
-  application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
-  application("WonderSwan", "ws", "ws wsc zip", "wsc-go", 0);
-  application("Pico-8", "pico8", "p8 png zip", "pico8", 0);
-  application("MSX", "msx", "rom mx1 mx2 dsk", "retro-home", 0);
-  application("Neo Geo Pocket", "ngp", "ngp ngc zip", "ngp-go", 0);
-  application("Sega Mega Drive", "md", "md gen bin zip", "gwenesis", 0);
-  application("ScummVM", "scummvm", "scummvm svm zip", "scummvm-go", 0);
+  // application("Nintendo Gameboy Advance", "gba", "gba zip", "gbsp", 0);
+  // application("Neo Geo Pocket", "ngp", "ngp ngc zip", "ngp-go", 0);
+  // application("Super Mario 64", "n64", "z64 zip", "sm64-go", 0);
+  // application("Mario Kart 64", "n64", "z64 zip", "mk64-go", 0);
+  // application("Store", "store", "none", "store", 0);
+  // application("Jazz Jackrabbit", "openjazz", "jazz", "openjazz", 0);
+  // application("DevilutionX-go", "diablo", "diablo", "devilutionx-go", 0);
+  // application("J2ME", "jar", "jar", "j2me-go", 0);
+  // application("Arcade (MAME)", "arcade", "zip", "mame-go", 0);
+  // application("WonderSwan", "ws", "ws wsc zip", "wsc-go", 0);
+  // application("Pico-8", "pico8", "p8 png zip", "pico8", 0);
+  // application("MSX", "msx", "rom mx1 mx2 dsk", "retro-home", 0);
+  // application("SNK Neo Geo", "neogeo", "zip", "mame-go", 0);
+  // application("Sega Mega Drive", "md", "md gen bin zip", "gwenesis", 0);
+  // application("ScummVM", "scummvm", "scummvm svm zip", "scummvm-go", 0);
+  // application("Commodore Amiga", "amiga", "adf adz rp9 hdf zip", "amiga-go", 0);
+  // application("Sinclair ZX Spectrum", "spectrum", "z80 sna tap tzx zip", "zx-go", 0);
+  // application("GTA Vice City", "gtavc", "bin gta", "gtavc-go", 0);
 
   applications_add_installed_cores();
 

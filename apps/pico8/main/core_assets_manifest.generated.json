@@ -6,7 +6,7 @@
   "launch_mode": "rom",
   "rom_extensions": [
     "p8",
-    "pbg"
+    "png"
   ],
   "rom_folder": "pico8",
   "art": [

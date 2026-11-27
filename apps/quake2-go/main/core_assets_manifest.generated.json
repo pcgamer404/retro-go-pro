@@ -9,6 +9,8 @@
   ],
   "rom_folder": "quake2",
   "art": [
+    "background.png",
+    "logo.png",
     "banner.png"
   ]
 }

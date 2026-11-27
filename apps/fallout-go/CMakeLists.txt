@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.5)
+set(COMPONENTS "main retro-go fallout_common fallout1 fallout2")
+set(RG_ENABLE_NETWORKING 0)
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
+elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../base.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../../base.cmake")
+else()
+    message(FATAL_ERROR "Could not find base.cmake next to this core or two levels above it")
+endif()
+
+set(SDKCONFIG_DEFAULTS "$ENV{SDKCONFIG_DEFAULTS};${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig")
+    file(READ "${CMAKE_CURRENT_LIST_DIR}/sdkconfig" _fo_sdkconfig)
+    if(NOT _fo_sdkconfig MATCHES "CONFIG_COMPILER_CXX_EXCEPTIONS=y")
+        message(WARNING "fallout-go/sdkconfig has C++ exceptions off: regenerating it")
+        file(REMOVE "${CMAKE_CURRENT_LIST_DIR}/sdkconfig")
+    endif()
+endif()
+
+project(fallout-go)
+
+target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE "-Wl,--undefined=esp_fill_random")

@@ -1,0 +1,17 @@
+{
+  "schema": 2,
+  "id": "gtavc-go",
+  "title": "GTA Vice City",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "bin",
+    "gta"
+  ],
+  "rom_folder": "gtavc",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

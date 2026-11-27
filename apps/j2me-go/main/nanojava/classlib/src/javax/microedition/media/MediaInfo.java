@@ -18,6 +18,9 @@ final class MediaInfo {
     }
 
     static String sniff(byte[] d) {
+        if (d == null || d.length == 0) {
+            return "application/octet-stream";
+        }
         if (tag(d, 0, "MThd")) {
             return MIDI;
         }
@@ -78,7 +81,7 @@ final class MediaInfo {
     }
 
     private static boolean tag(byte[] d, int off, String t) {
-        if (d.length < off + t.length()) {
+        if (d == null || d.length < off + t.length()) {
             return false;
         }
         for (int i = 0; i < t.length(); i++) {

@@ -66,7 +66,10 @@ typedef struct
 static int open_zipstream(FakeFileHandle *f, const char *zip, const char *name)
 {
 	uint32_t size = 0;
-	struct zipstream *zs = zipstream_open(zip, name, 0, &size);
+	uint32_t crc = 0;
+	if (name && strlen(name) == 8 && strspn(name, "0123456789abcdefABCDEF") == 8)
+		crc = (uint32_t)strtoul(name, NULL, 16);
+	struct zipstream *zs = zipstream_open(zip, name, crc, &size);
 	if (!zs)
 		return -1;
 	if (size < ZIPSTREAM_MIN)
@@ -1328,7 +1331,7 @@ int osd_fseek (void *file, int offset, int whence)
          {
             /* backwards: from the start again */
             zipstream_close(f->zs);
-            f->zs = zipstream_open(f->zs_zip, f->zs_name, 0, NULL);
+            f->zs = zipstream_open(f->zs_zip, f->zs_name, f->crc, NULL);
             f->offset = 0;
             if( !f->zs )
                return -1;

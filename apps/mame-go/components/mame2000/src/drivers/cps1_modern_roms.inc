@@ -1854,6 +1854,32 @@ ROM_START( sf2hfu )
 	ROM_LOAD( "sf2.19",       0x20000, 0x20000, 0xbeade53f )
 ROM_END
 
+ROM_START( dinom )
+	ROM_REGION( CODE_SIZE, REGION_CPU1 )      /* 68000 code */
+	ROM_LOAD_WIDE_SWAP( "cde_23.8f", 0x000000, 0x80000, 0x5d985a1a )
+	ROM_LOAD_WIDE_SWAP( "cde_22.7f", 0x080000, 0x80000, 0x6f3e1a6c )
+	ROM_LOAD_WIDE_SWAP( "cde_21.6f", 0x100000, 0x80000, 0x66d23de2 )
+	ROM_REGION( 0x400000, REGION_GFX1 | REGIONFLAG_DISPOSE )
+	ROM_LOAD( "cd_gfx02.rom",   0x000000, 0x80000, 0x09c8fc2d )
+	ROM_LOAD( "cd_gfx06.rom",   0x080000, 0x80000, 0xe7599ac4 )
+	ROM_LOAD( "cd_gfx01.rom",   0x100000, 0x80000, 0x8da4f917 )
+	ROM_LOAD( "cd_gfx05.rom",   0x180000, 0x80000, 0x470befee )
+	ROM_LOAD( "cd_gfx04.rom",   0x200000, 0x80000, 0x637ff38f )
+	ROM_LOAD( "cd_gfx08.rom",   0x280000, 0x80000, 0x211b4b15 )
+	ROM_LOAD( "cd_gfx03.rom",   0x300000, 0x80000, 0x6c40f603 )
+	ROM_LOAD( "cd_gfx07.rom",   0x380000, 0x80000, 0x22bfb7a3 )
+
+	ROM_REGION( 2*0x28000, REGION_CPU2 ) /* QSound Z80 code + space for decrypted opcodes */
+	ROM_LOAD( "cd_q.rom",       0x00000, 0x08000, 0x605fdb0b )
+	ROM_CONTINUE(               0x10000, 0x18000 )
+
+	ROM_REGION( 0x200000, REGION_SOUND1 ) /* QSound samples */
+	ROM_LOAD( "cd_q1.rom",      0x000000, 0x80000, 0x60927775 )
+	ROM_LOAD( "cd_q2.rom",      0x080000, 0x80000, 0x770f4c47 )
+	ROM_LOAD( "cd_q3.rom",      0x100000, 0x80000, 0x2f273ffc )
+	ROM_LOAD( "cd_q4.rom",      0x180000, 0x80000, 0x2c67821d )
+ROM_END
+
 ROM_START( dinou )
 	ROM_REGION( CODE_SIZE, REGION_CPU1 )      /* 68000 code */
 	ROM_LOAD_WIDE_SWAP( "cdu_23a.8f", 0x000000, 0x80000, 0x7c2543cd )

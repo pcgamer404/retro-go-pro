@@ -21,6 +21,7 @@
 #include "p8_png.h"
 #include "pico8_globals.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -649,13 +650,94 @@ static bool zip_name_is_cart(const uint8_t *name, size_t length)
            (count >= 7 && strcmp(tail + count - 7, ".p8.png") == 0);
 }
 
+// Read a cart image into PSRAM.
+//
+// Two things make the usual helpers unusable for large .p8 text carts here:
+// rg_storage_read_file() sizes its buffer from ftell() and then does one plain
+// malloc(), which on this target failed for Celeste even with ~7 MB of PSRAM
+// free; and rg_storage_stat() reported no usable size for the same path, so a
+// stat-sized read fell back to that failing path. Neither is reproduced here:
+// the buffer grows in 64 KB steps from the slow heap as bytes actually arrive,
+// so nothing depends on stat(), ftell() or a single huge allocation, and the
+// ~170 KB internal heap stays free for the Lua state.
+#define P8_CART_READ_CHUNK (64u * 1024u)
+#define P8_CART_READ_MAX   (32u * 1024u * 1024u)
+
+static bool read_cart_file(const char *path, uint8_t **data_out,
+                           size_t *size_out)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        RG_LOGE("pico8: cannot open cart (errno %d): %s", errno, path);
+        return false;
+    }
+
+    size_t cap = P8_CART_READ_CHUNK;
+    uint8_t *buf = (uint8_t *)rg_alloc(cap + 1, MEM_SLOW | MEM_NOPANIC);
+    if (!buf) {
+        RG_LOGE("pico8: no memory for %u-byte cart buffer: %s",
+                (unsigned)cap, path);
+        fclose(fp);
+        return false;
+    }
+
+    size_t len = 0;
+    for (;;) {
+        if (len == cap) {
+            if (cap >= P8_CART_READ_MAX) {
+                RG_LOGE("pico8: cart exceeds %u bytes, refusing: %s",
+                        (unsigned)P8_CART_READ_MAX, path);
+                free(buf);
+                fclose(fp);
+                return false;
+            }
+            size_t next = cap * 2;
+            if (next > P8_CART_READ_MAX) next = P8_CART_READ_MAX;
+            uint8_t *grown = (uint8_t *)rg_alloc(next + 1,
+                                                 MEM_SLOW | MEM_NOPANIC);
+            if (!grown) {
+                RG_LOGE("pico8: out of memory growing cart buffer to %u: %s",
+                        (unsigned)next, path);
+                free(buf);
+                fclose(fp);
+                return false;
+            }
+            memcpy(grown, buf, len);
+            free(buf);
+            buf = grown;
+            cap = next;
+        }
+        size_t got = fread(buf + len, 1, cap - len, fp);
+        len += got;
+        if (got == 0) {
+            if (ferror(fp)) {
+                RG_LOGE("pico8: read error after %u bytes: %s",
+                        (unsigned)len, path);
+                clearerr(fp);
+            }
+            break;
+        }
+    }
+    fclose(fp);
+
+    if (len == 0) {
+        RG_LOGE("pico8: cart file is empty: %s", path);
+        free(buf);
+        return false;
+    }
+    buf[len] = '\0';
+    *data_out = buf;
+    *size_out = len;
+    return true;
+}
+
 static bool load_single_cart_zip(const char *path, uint8_t **data_out,
                                  size_t *size_out, char *name_out,
                                  size_t name_out_size)
 {
     uint8_t *zip = NULL;
     size_t zip_size = 0;
-    if (!rg_storage_read_file(path, (void **)&zip, &zip_size, 0)) return false;
+    if (!read_cart_file(path, &zip, &zip_size)) return false;
 
     size_t search_start = zip_size > 65557 ? zip_size - 65557 : 0;
     size_t eocd = SIZE_MAX;
@@ -750,7 +832,10 @@ static bool load_single_cart_zip(const char *path, uint8_t **data_out,
         return false;
     }
 
-    uint8_t *output = (uint8_t *)malloc(output_size);
+    // Decompressed carts are just as large as raw .p8 text; keep them off the
+    // internal heap whenever PSRAM is available.
+    uint8_t *output = (uint8_t *)rg_alloc(output_size, MEM_SLOW | MEM_NOPANIC);
+    if (!output) output = (uint8_t *)malloc(output_size);
     if (!output) {
         free(zip);
         return false;
@@ -820,8 +905,7 @@ static bool load_cart_from_path(const char *requested_path, const char *param,
     bool read_ok = zipped
         ? load_single_cart_zip(resolved_path, &rom_data, &rom_size,
                                archive_name, sizeof(archive_name))
-        : rg_storage_read_file(resolved_path, (void **)&rom_data,
-                               &rom_size, 0);
+        : read_cart_file(resolved_path, &rom_data, &rom_size);
     if (!read_ok) {
         RG_LOGE("pico8: unable to read cart file: %s", resolved_path);
         return false;
@@ -978,8 +1062,7 @@ bool pico8_read_cart_rom(const char *filename, uint8_t *dest,
 
     uint8_t *file_data = NULL;
     size_t file_size = 0;
-    if (!rg_storage_read_file(resolved_path, (void **)&file_data,
-                              &file_size, 0)) {
+    if (!read_cart_file(resolved_path, &file_data, &file_size)) {
         RG_LOGE("pico8: unable to read reload cart file: %s", resolved_path);
         show_missing_cart_alert(filename);
         return false;

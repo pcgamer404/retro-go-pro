@@ -192,6 +192,7 @@ void midp_audio_init(void)
 /* Stops everything and frees all clips (the VM is going away). */
 void midp_audio_shutdown(void)
 {
+    pal_audio_shutdown();
     for (int s = 0; s < SYNTH_SLOTS; s++)
         if (slot_owner[s])
             release_slot(s);

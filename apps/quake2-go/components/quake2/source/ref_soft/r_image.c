@@ -189,7 +189,8 @@ void LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *heigh
 	int		x, y;
 	int		len;
 	int		dataByte, runLength;
-	byte	*out, *pix;
+	byte	*out;
+	int		w, h, ow, oh, scale;
 
 	*pic = NULL;
 
@@ -230,27 +231,47 @@ void LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *heigh
 		return;
 	}
 
-	out = r_image_permanent ? Q_Arena_Alloc ( (pcx->ymax+1) * (pcx->xmax+1) )
-		: Q_Arena_AllocTop ( (pcx->ymax+1) * (pcx->xmax+1) );
+	//
+	// ESP32: decode at full, half, quarter or eighth resolution, whichever
+	// fits. A 640x480 skin needs ~300 KB, more than a loaded map usually
+	// leaves free, and that used to abort the whole level with
+	// "LoadPCX: out of memory". The caller gets the real size back, so the
+	// smaller copy is drawn correctly.
+	//
+	w = pcx->xmax + 1;
+	h = pcx->ymax + 1;
+
+	for (scale = 1 ; ; scale *= 2)
+	{
+		ow = (w + scale - 1) / scale;
+		oh = (h + scale - 1) / scale;
+		out = r_image_permanent ? Q_Arena_Alloc (ow * oh) : Q_Arena_AllocTop (ow * oh);
+		if (out || scale >= 8)
+			break;
+	}
 	if (!out)
 		ri.Sys_Error (ERR_DROP, "LoadPCX: out of memory for %s", filename);
 
-	*pic = out;
+	if (scale > 1)
+		ri.Con_Printf (PRINT_ALL, "LoadPCX: %s at 1/%i resolution\n", filename, scale);
 
-	pix = out;
+	*pic = out;
 
 	if (palette)
 	{
 		*palette = malloc(768);
-		memcpy (*palette, (byte *)pcx + len - 768, 768);
+		if (*palette)
+			memcpy (*palette, (byte *)pcx + len - 768, 768);
 	}
 
 	if (width)
-		*width = pcx->xmax+1;
+		*width = ow;
 	if (height)
-		*height = pcx->ymax+1;
+		*height = oh;
 
-	for (y=0 ; y<=pcx->ymax ; y++, pix += pcx->xmax+1)
+	// decode every PCX pixel (the RLE runs cross rows), keeping one out of
+	// every "scale" rows and columns
+	for (y=0 ; y<=pcx->ymax ; y++)
 	{
 		for (x=0 ; x<=pcx->xmax ; )
 		{
@@ -264,8 +285,12 @@ void LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *heigh
 			else
 				runLength = 1;
 
-			while(runLength-- > 0)
-				pix[x++] = dataByte;
+			while(runLength-- > 0 && x <= pcx->xmax)
+			{
+				if ((x % scale) == 0 && (y % scale) == 0)
+					out[(y/scale)*ow + (x/scale)] = dataByte;
+				x++;
+			}
 		}
 
 	}
@@ -273,7 +298,8 @@ void LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *heigh
 	if ( raw - (byte *)pcx > len)
 	{
 		ri.Con_Printf (PRINT_DEVELOPER, "PCX file %s was malformed", filename);
-		free (*pic);
+		if (out && Q_Arena_Contains (out))
+			Q_Arena_Free (out);
 		*pic = NULL;
 	}
 

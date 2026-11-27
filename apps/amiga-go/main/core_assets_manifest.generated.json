@@ -1,0 +1,20 @@
+{
+  "schema": 2,
+  "id": "amiga-go",
+  "title": "Commodore Amiga",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "adf",
+    "adz",
+    "hdf",
+    "rp9",
+    "zip"
+  ],
+  "rom_folder": "amiga",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

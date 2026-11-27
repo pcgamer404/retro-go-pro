@@ -2,6 +2,6 @@
   "id": "pico8",
   "title": "Pico 8",
   "launch_mode": "rom",
-  "rom_extensions": ["pbg", "p8"],
+  "rom_extensions": ["png", "p8"],
   "rom_folder": "pico8"
 }

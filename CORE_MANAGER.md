@@ -99,9 +99,36 @@ No boot counter is needed.
 
 ### Recovery
 
-Hold **SELECT** (GPIO 5) at power-on for 2 seconds. The bootloader erases both
-manifest copies and boots the launcher. Installed images are left alone but are
-no longer listed.
+Nothing erases the manifest at power-on. An earlier bootloader wiped it when
+SELECT (GPIO 5) was held low for 2 seconds, and SELECT+START is exactly the
+retro-go menu combination a user holds while power-cycling a hung core - so a
+game that hung could delete the installed list on the next boot. Recovery is
+now in the launcher only: **Core manager** can delete one core, format the pool,
+or reinstall from SD. It is always reachable, because a selected core is booted
+once and then the next reset lands in the launcher.
+
+### Manifest backup
+
+Every manifest save also writes `/sd/cores/manifest.bak`. If the launcher finds
+both flash copies invalid on the next boot (erased sectors, a reset between the
+erase and the write), it restores the list from that file and keeps only the
+entries whose image is still in the pool. A deliberate wipe is not undone by it:
+the wipe leaves a valid, empty manifest instead of an erased sector.
+
+The log says what happened:
+
+```
+W Core manifest was missing, restored 5 core(s) from /sd/cores/manifest.bak
+W Core manifest restore: 3 of 5 image(s) still present
+```
+
+### Updating without losing cores
+
+`retro-go_<ver>_<target>.img` is a full flash image: it fills the pool with
+`0xFF`, so installed cores must be reinstalled after flashing it.
+`retro-go_<ver>_<target>_partial.img` stops at the start of the pool; flash it
+at `0x0` with esptool to replace the bootloader and launcher while keeping the
+installed core images and the manifest.
 
 ## Usage
 

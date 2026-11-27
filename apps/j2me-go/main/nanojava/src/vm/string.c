@@ -14,12 +14,20 @@ static uint32_t intern_cap, intern_count;
 
 jint str_length(Object *s)
 {
+    if (!s)
+        return 0;
     return GET_INT(s, vm.f_String_count);
 }
 
+static const jchar empty_chars[1];
+
 const jchar *str_chars(Object *s)
 {
+    if (!s)
+        return empty_chars;
     Object *value = GET_REF(s, vm.f_String_value);
+    if (!value)
+        return empty_chars;
     return ARRAY_DATA(value, jchar) + GET_INT(s, vm.f_String_offset);
 }
 
@@ -137,6 +145,11 @@ char *str_to_utf8(Object *s, char *buf, size_t size)
 
 char *str_dup_utf8(Object *s)
 {
+    if (!s) {
+        char *buf = nj_alloc(1);
+        buf[0] = 0;
+        return buf;
+    }
     size_t n = utf8_encode(str_chars(s), str_length(s), NULL, 0);
     char  *buf = nj_alloc(n + 1);
     utf8_encode(str_chars(s), str_length(s), buf, n + 1);

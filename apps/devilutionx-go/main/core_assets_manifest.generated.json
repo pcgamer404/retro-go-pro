@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "devilutionx-go",
+  "title": "Diablo",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "mpq"
+  ],
+  "rom_folder": "diablo",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

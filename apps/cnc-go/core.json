@@ -1,0 +1,7 @@
+{
+  "id": "cnc-go",
+  "title": "Command & Conquer",
+  "launch_mode": "rom",
+  "rom_extensions": ["mix", "cnc", "ini"],
+  "rom_folder": "cnc"
+}

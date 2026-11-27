@@ -278,11 +278,19 @@ static bool link_class(Class *c)
         c->vtable_len = (uint16_t)n;
     }
 
-    /* Natives. */
+    /* Natives and native overrides. */
     for (int i = 0; i < c->n_methods; i++) {
         Method *m = &c->methods[i];
-        if (m->access & ACC_NATIVE) {
-            m->native = native_lookup(c->name, m->name, m->desc);
+        NativeFn fn = native_lookup(c->name, m->name, m->desc);
+        if (fn) {
+            m->native = fn;
+            m->access |= ACC_NATIVE;
+            m->max_locals = m->arg_slots;
+            m->code = NULL;
+            m->code_len = 0;
+            m->jit_code = NULL;
+        } else if (m->access & ACC_NATIVE) {
+            m->native = NULL;
             m->max_locals = m->arg_slots;
         }
     }

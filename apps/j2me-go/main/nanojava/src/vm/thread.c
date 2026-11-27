@@ -9,11 +9,16 @@
  */
 #include "../pal/alloc.h"
 #include "vm.h"
+#include "dynarec.h"
 #include "../pal/pal.h"
 
 #include <stdlib.h>
 
+#if NJ_ENABLE_DYNAREC
+#define TIME_SLICE 5000   /* backward branches + calls (reduced scheduler thrashing in JIT) */
+#else
 #define TIME_SLICE 2000   /* backward branches + calls */
+#endif
 
 void (*vm_poll_hook)(void);
 
@@ -22,10 +27,14 @@ Thread *thread_create(Object *jthread, Method *entry, Slot *args, int nargs)
     Thread *t = nj_alloc(sizeof *t);
     t->jthread = jthread;
     t->stack = nj_pal_calloc_fast(sizeof(Slot) * vm.opt.stack_slots);
+    if (!t->stack)
+        t->stack = nj_alloc(sizeof(Slot) * vm.opt.stack_slots);
     if (!t->stack) nj_fatal("out of native memory (thread stack)");
     t->stack_limit = t->stack + vm.opt.stack_slots;
     t->max_frames = vm.opt.max_frames;
     t->frames = nj_pal_calloc_fast(sizeof(Frame) * t->max_frames);
+    if (!t->frames)
+        t->frames = nj_alloc(sizeof(Frame) * t->max_frames);
     if (!t->frames) nj_fatal("out of native memory (thread frames)");
     t->state = TS_RUNNABLE;
     t->priority = 5;
@@ -143,6 +152,17 @@ int monitor_wait(Thread *t, Object *o, jlong ms)
             vm_throw_new(t, "java/lang/IllegalArgumentException", "timeout value is negative");
             return NATIVE_OK;
         }
+        if (ms == 0) {
+            /* If caller is inside an ad SDK or network tracker wait loop, bound wait to 500ms
+             * to avoid permanent deadlocks on offline devices. */
+            if (t->depth > 0 && t->frames[t->depth - 1].m && t->frames[t->depth - 1].m->cls) {
+                const char *cls_name = t->frames[t->depth - 1].m->cls->name;
+                if (cls_name && (strstr(cls_name, "InnerActive") || strstr(cls_name, "IASDK") ||
+                                 strstr(cls_name, "flurry") || strstr(cls_name, "Flurry"))) {
+                    ms = 500;
+                }
+            }
+        }
         if (t->interrupted) {
             t->interrupted = false;
             vm_throw_new(t, "java/lang/InterruptedException", NULL);
@@ -238,7 +258,7 @@ int thread_sleep(Thread *t, jlong ms)
     if (t->native_phase == 0) {
         if (ms >= nj_sleep_min_ms && nj_sleep_pct < 100) {
             jlong scaled = ms * nj_sleep_pct / 100;
-            ms = scaled > 0 ? scaled : 1;
+            ms = (nj_sleep_pct == 0) ? 0 : (scaled > 0 ? scaled : 1);
         }
         if (ms < 0) {
             vm_throw_new(t, "java/lang/IllegalArgumentException", "timeout value is negative");

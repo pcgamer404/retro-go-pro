@@ -106,7 +106,7 @@ void rg_storage_init(void)
 
     esp_vfs_fat_mount_config_t mount_config = {
         .format_if_mount_failed = false,
-        .max_files = 4,
+        .max_files = 8,
         .allocation_unit_size = 0,
     };
 
@@ -161,7 +161,7 @@ void rg_storage_init(void)
 
     esp_vfs_fat_mount_config_t mount_config = {
         .format_if_mount_failed = false,
-        .max_files = 4,
+        .max_files = 8,
         .allocation_unit_size = 0,
     };
 
@@ -196,7 +196,7 @@ void rg_storage_init(void)
 
         esp_vfs_fat_mount_config_t mount_config = {
             .format_if_mount_failed = true, // if mount failed, it's probably because it's a clean install so the partition hasn't been formatted yet
-            .max_files = 4, // must be initialized, otherwise it will be 0, which doesn't make sense, and will trigger an ESP_ERR_NO_MEM error
+            .max_files = 8, // must be initialized, otherwise it will be 0, which doesn't make sense, and will trigger an ESP_ERR_NO_MEM error
         };
 
         esp_err_t err = esp_vfs_fat_spiflash_mount(RG_STORAGE_ROOT, RG_STORAGE_FLASH_PARTITION, &mount_config, &wl_handle);

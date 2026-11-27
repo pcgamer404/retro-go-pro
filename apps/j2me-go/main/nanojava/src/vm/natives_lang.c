@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define THIS        (args[0].ref)
 #define ARG_REF(n)  (args[(n)].ref)
@@ -175,13 +176,24 @@ static int Class_isArray(Thread *t, Slot *args, Slot *ret)
 
 static int Class_getName(Thread *t, Slot *args, Slot *ret)
 {
-    const char *n = class_from_mirror(THIS)->name;
+    Class *c = class_from_mirror(THIS);
+    if (!c || !c->name) {
+        ret->ref = NULL;
+        return NATIVE_OK;
+    }
+    const char *n = c->name;
     size_t      len = strlen(n);
-    char       *buf = nj_pal_malloc(len + 1);
+    char        sbuf[128];
+    char       *buf = len < sizeof(sbuf) ? sbuf : nj_pal_malloc(len + 1);
+    if (!buf) {
+        ret->ref = NULL;
+        return NATIVE_OK;
+    }
     for (size_t i = 0; i <= len; i++)
         buf[i] = n[i] == '/' ? '.' : n[i];
     ret->ref = str_new_utf8(t, buf);
-    nj_pal_free(buf);
+    if (buf != sbuf)
+        nj_pal_free(buf);
     return NATIVE_OK;
 }
 
@@ -257,6 +269,7 @@ static int System_identityHashCode(Thread *t, Slot *args, Slot *ret)
 
 static const char *const properties[][2] = {
     {"microedition.platform", "NanoJava"},
+    {"microedition.version", "2.0"},
     {"microedition.configuration", "CLDC-1.1"},
     {"microedition.profiles", "MIDP-2.0"},
     {"microedition.encoding", "ISO-8859-1"},
@@ -264,10 +277,42 @@ static const char *const properties[][2] = {
     {"microedition.commports", ""},
     {"microedition.hostname", "localhost"},
     {"microedition.media.version", "1.1"},
+    {"microedition.media.encodings", "audio/x-wav audio/midi audio/amr"},
+    {"microedition.io.file.FileConnection.version", "1.0"},
     {"supports.mixing", "false"},
     {"supports.audio.capture", "false"},
     {"supports.video.capture", "false"},
     {"supports.recording", "false"},
+    {"audio.encodings", "audio/x-wav audio/midi audio/amr"},
+    {"video.encodings", ""},
+    {"video.snapshot.encodings", ""},
+    /* MIDP/CLDC system properties.  Titles routinely compare these with
+     * String.equals, so a null is a crash rather than a fallback. */
+    {"user.language", "en"},
+    {"user.region", "US"},
+    {"user.timezone", "UTC"},
+    {"file.separator", "/"},
+    {"path.separator", ":"},
+    {"line.separator", "\n"},
+    /* Device & Carrier identification properties often queried by J2ME titles & ad SDKs */
+    {"com.nokia.mid.imei", "352093041234567"},
+    {"com.nokia.IMEI", "352093041234567"},
+    {"phone.imei", "352093041234567"},
+    {"device.imei", "352093041234567"},
+    {"com.sonyericsson.imei", "352093041234567"},
+    {"com.samsung.imei", "352093041234567"},
+    {"com.motorola.imei", "352093041234567"},
+    {"com.siemens.imei", "352093041234567"},
+    {"IMEI", "352093041234567"},
+    {"com.nokia.mid.imsi", "310260123456789"},
+    {"com.nokia.mid.countrycode", "1"},
+    {"com.nokia.mid.networkavailability", "true"},
+    {"com.nokia.network.access", "WIFI"},
+    {"com.nokia.mid.mobileservicestate", "0"},
+    {"com.nokia.mid.networkid", "310260"},
+    {"com.nokia.mid.dateformat", "dd/MM/yyyy"},
+    {"com.nokia.mid.timeformat", "HH:mm:ss"},
+    {"wireless.messaging.sms.smsc", "+15551234567"},
     {NULL, NULL}
 };
 
@@ -282,8 +327,15 @@ static int System_getProperty0(Thread *t, Slot *args, Slot *ret)
     for (int i = 0; properties[i][0]; i++) {
         if (strcmp(properties[i][0], key) == 0) {
             ret->ref = str_new_utf8(t, properties[i][1]);
-            break;
+            return NATIVE_OK;
         }
+    }
+    /* Fallback for unlisted IMEI / IMSI / phone identity queries:
+     * J2ME games routinely call .length() or .equals() on the return value,
+     * so returning NULL results in an immediate NullPointerException. */
+    if (strstr(key, "imei") || strstr(key, "IMEI") || strstr(key, "imsi") || strstr(key, "IMSI")) {
+        ret->ref = str_new_utf8(t, "352093041234567");
+        return NATIVE_OK;
     }
     return NATIVE_OK;
 }
@@ -313,14 +365,23 @@ static int Runtime_totalMemory(Thread *t, Slot *args, Slot *ret)
 static int Runtime_gc(Thread *t, Slot *args, Slot *ret)
 {
     (void)t; (void)args; (void)ret;
-    /* CLDC says gc() is advisory.  Some games call it on every frame (one title
-     * spends ~2.8 ms/frame in it), but the allocator already collects on demand
-     * when a request cannot be satisfied, so a fresh request is honoured at
-     * most twice a second - or immediately when the heap really is tight. */
-    static int64_t last_ms;
+    /* CLDC says gc() is advisory.  Loading screens call it after every asset
+     * (some call it every frame), and a full mark/sweep each time can dominate
+     * the load.  Honour it at most twice a second, but collect immediately
+     * when the free heap is below 1/8 of the total.  Allocation failure still
+     * collects on demand, so this cannot introduce an OutOfMemoryError that
+     * the old behaviour avoided. */
+    static int64_t last_gc = -100000;
     int64_t now = pal_time_ms();
-    if (now - last_ms >= 500 || heap_free_bytes() < heap_total_bytes() / 8) {
-        last_ms = now;
+    size_t  total = heap_total_bytes();
+#ifndef ESP_PLATFORM
+    if (getenv("NJ_GC_ALWAYS")) {         /* host A/B: old behaviour */
+        heap_gc();
+        return NATIVE_OK;
+    }
+#endif
+    if (heap_free_bytes() < total / 8 || now - last_gc >= 500) {
+        last_gc = now;
         heap_gc();
     }
     return NATIVE_OK;
@@ -352,6 +413,10 @@ static int Thread_start0(Thread *t, Slot *args, Slot *ret)
 {
     (void)ret;
     Object *jt = THIS;
+    if (thread_find(jt)) {
+        vm_throw_new(t, "java/lang/IllegalThreadStateException", "thread already started");
+        return NATIVE_OK;
+    }
     Method *run = class_find_virtual(jt->cls, S_run, S_V);
     if (!run || !run->code) {
         vm_throw_new(t, "java/lang/InternalError", "Thread.run() not found");
@@ -440,7 +505,23 @@ static int Throwable_fillInStackTrace(Thread *t, Slot *args, Slot *ret)
 static int Throwable_printStackTrace0(Thread *t, Slot *args, Slot *ret)
 {
     (void)ret;
-    vm_print_exception(t, THIS);
+    static int64_t last_print = 0;
+    static Class *last_cls = NULL;
+    static int suppressed = 0;
+    int64_t now = pal_time_ms();
+    Object *exc = THIS;
+    Class *cls = exc ? exc->cls : NULL;
+    if (cls == last_cls && (now - last_print < 1000)) {
+        suppressed++;
+        return NATIVE_OK;
+    }
+    if (suppressed > 0) {
+        nj_log("[Throwable.printStackTrace: %d repeated prints suppressed]", suppressed);
+        suppressed = 0;
+    }
+    last_print = now;
+    last_cls = cls;
+    vm_print_exception(t, exc);
     return NATIVE_OK;
 }
 
@@ -677,14 +758,32 @@ static int Resources_read(Thread *t, Slot *args, Slot *ret)
         return NATIVE_OK;
     }
     str_to_utf8(ARG_REF(0), path, sizeof path);
+    char canon[256];
     uint32_t len;
-    uint8_t *data = res_read_app(path, &len);
-    if (!data)
+    if (!res_lookup_app(path, &len, canon, sizeof canon)) {
+        /* A missing resource is the usual cause of a NullPointerException in
+         * DataInputStream or Image.createImage during a loading screen, so
+         * name the file (bounded so a probe-happy title cannot flood). */
+        static int missing_logged;
+        if (missing_logged < 24) {
+            missing_logged++;
+            nj_log("[res] missing: %s", path);
+        }
         return NATIVE_OK;
+    }
+    if (len > 32768 && heap_largest_free_bytes() < (size_t)len + sizeof(Array) + 1024) {
+        heap_gc();
+    }
     Array *a = vm_new_prim_array(t, 'B', (jint)len);
-    if (a)
-        memcpy(ARRAY_DATA(a, uint8_t), data, len);
-    nj_pal_free(data);
+    if (!a)
+        return NATIVE_OK;
+    if (res_read_app_into(canon, ARRAY_DATA(a, uint8_t), len) != (int32_t)len) {
+        /* The entry was sized a moment ago; if the archive is truncated now,
+         * report "missing" instead of handing back a zero-filled image. */
+        nj_log("[res] read error: %s (expected %u bytes)", canon, (unsigned)len);
+        ret->ref = NULL;
+        return NATIVE_OK;
+    }
     ret->ref = (Object *)a;
     return NATIVE_OK;
 }
@@ -695,6 +794,9 @@ static int AppProperties_jad(Thread *t, Slot *args, Slot *ret)
     const uint8_t *data = res_jad(&len);
     if (!data)
         return NATIVE_OK;
+    if (len > 32768 && heap_largest_free_bytes() < (size_t)len + sizeof(Array) + 1024) {
+        heap_gc();
+    }
     Array *a = vm_new_prim_array(t, 'B', (jint)len);
     if (a)
         memcpy(ARRAY_DATA(a, uint8_t), data, len);
@@ -729,7 +831,185 @@ static int Boot_exit(Thread *t, Slot *args, Slot *ret)
     return NATIVE_BLOCK;
 }
 
+/* Adware & Analytics Bypass Stubs:
+ * Dead 2000s mobile ad SDKs (InnerActive, Flurry, Greystripe) attempt network
+ * handshakes, disclaimer popups, and infinite Object.wait() loops that deadlock
+ * offline retro devices. We intercept their entry points so games boot cleanly. */
+
+static int Adware_returnOne(Thread *t, Slot *args, Slot *ret)
+{
+    (void)t; (void)args;
+    ret->i = 1;
+    nj_log("[adware_bypass] Intercepted ad SDK method -> returning 1");
+    return NATIVE_OK;
+}
+
+static int Adware_returnZero(Thread *t, Slot *args, Slot *ret)
+{
+    (void)t; (void)args;
+    ret->i = 0;
+    return NATIVE_OK;
+}
+
+static int Adware_noop(Thread *t, Slot *args, Slot *ret)
+{
+    (void)t; (void)args; (void)ret;
+    return NATIVE_OK;
+}
+
+/* ------------------------------------------------------------------------ */
+/* java.io.ByteArrayInputStream Native Overrides                            */
+/* Fast-paths bulk buffer reads & skips in C, avoiding thousands of Java   */
+/* bytecode loop transitions and monitor synchronizations during loading.   */
+/* ------------------------------------------------------------------------ */
+static Field *s_f_bais_buf = NULL;
+static Field *s_f_bais_pos = NULL;
+static Field *s_f_bais_count = NULL;
+
+static void init_bais_fields(Object *obj)
+{
+    if (!s_f_bais_buf && obj && obj->cls) {
+        s_f_bais_buf = class_find_field(obj->cls, "buf", "[B");
+        s_f_bais_pos = class_find_field(obj->cls, "pos", "I");
+        s_f_bais_count = class_find_field(obj->cls, "count", "I");
+    }
+}
+
+static int ByteArrayInputStream_read(Thread *t, Slot *args, Slot *ret)
+{
+    Object *this_obj = THIS;
+    if (!this_obj) {
+        NPE(t);
+        return NATIVE_OK;
+    }
+    init_bais_fields(this_obj);
+    if (!s_f_bais_buf || !s_f_bais_pos || !s_f_bais_count) {
+        ret->i = -1;
+        return NATIVE_OK;
+    }
+    Array *buf = (Array *)GET_REF(this_obj, s_f_bais_buf);
+    jint pos = GET_INT(this_obj, s_f_bais_pos);
+    jint count = GET_INT(this_obj, s_f_bais_count);
+    if (!buf || pos >= count) {
+        ret->i = -1;
+        return NATIVE_OK;
+    }
+    uint8_t byte_val = ARRAY_DATA(buf, uint8_t)[pos];
+    SET_INT(this_obj, s_f_bais_pos, pos + 1);
+    ret->i = (jint)byte_val;
+    return NATIVE_OK;
+}
+
+static int ByteArrayInputStream_read_bytes(Thread *t, Slot *args, Slot *ret)
+{
+    Object *this_obj = THIS;
+    if (!this_obj) {
+        NPE(t);
+        return NATIVE_OK;
+    }
+    Array *b = (Array *)ARG_REF(1);
+    if (!b) {
+        NPE(t);
+        return NATIVE_OK;
+    }
+    jint off = ARG_INT(2);
+    jint len = ARG_INT(3);
+    if (off < 0 || len < 0 || off > b->length - len) {
+        vm_throw_new(t, "java/lang/IndexOutOfBoundsException", NULL);
+        return NATIVE_OK;
+    }
+    init_bais_fields(this_obj);
+    if (!s_f_bais_buf || !s_f_bais_pos || !s_f_bais_count) {
+        ret->i = -1;
+        return NATIVE_OK;
+    }
+    Array *buf = (Array *)GET_REF(this_obj, s_f_bais_buf);
+    if (!buf) {
+        ret->i = -1;
+        return NATIVE_OK;
+    }
+    jint pos = GET_INT(this_obj, s_f_bais_pos);
+    jint count = GET_INT(this_obj, s_f_bais_count);
+    if (pos >= count) {
+        ret->i = -1;
+        return NATIVE_OK;
+    }
+    if (len > count - pos) {
+        len = count - pos;
+    }
+    if (len <= 0) {
+        ret->i = 0;
+        return NATIVE_OK;
+    }
+    memcpy(ARRAY_DATA(b, uint8_t) + off, ARRAY_DATA(buf, uint8_t) + pos, (size_t)len);
+    SET_INT(this_obj, s_f_bais_pos, pos + len);
+    ret->i = len;
+    return NATIVE_OK;
+}
+
+static int ByteArrayInputStream_skip(Thread *t, Slot *args, Slot *ret)
+{
+    Object *this_obj = THIS;
+    if (!this_obj) {
+        NPE(t);
+        return NATIVE_OK;
+    }
+    int64_t n = ARG_LONG(1);
+    init_bais_fields(this_obj);
+    if (!s_f_bais_pos || !s_f_bais_count) {
+        slot_set_long(ret, 0);
+        return NATIVE_OK;
+    }
+    jint pos = GET_INT(this_obj, s_f_bais_pos);
+    jint count = GET_INT(this_obj, s_f_bais_count);
+    if (n > (int64_t)(count - pos)) {
+        n = count - pos;
+    }
+    if (n < 0) {
+        n = 0;
+    }
+    SET_INT(this_obj, s_f_bais_pos, pos + (jint)n);
+    slot_set_long(ret, n);
+    return NATIVE_OK;
+}
+
+static int ByteArrayInputStream_available(Thread *t, Slot *args, Slot *ret)
+{
+    Object *this_obj = THIS;
+    if (!this_obj) {
+        NPE(t);
+        return NATIVE_OK;
+    }
+    init_bais_fields(this_obj);
+    if (!s_f_bais_pos || !s_f_bais_count) {
+        ret->i = 0;
+        return NATIVE_OK;
+    }
+    jint pos = GET_INT(this_obj, s_f_bais_pos);
+    jint count = GET_INT(this_obj, s_f_bais_count);
+    ret->i = (count > pos) ? (count - pos) : 0;
+    return NATIVE_OK;
+}
+
 static const NativeEntry lang_natives[] = {
+    /* java.io.ByteArrayInputStream native overrides */
+    {"java/io/ByteArrayInputStream", "read", "()I", ByteArrayInputStream_read},
+    {"java/io/ByteArrayInputStream", "read", "([BII)I", ByteArrayInputStream_read_bytes},
+    {"java/io/ByteArrayInputStream", "skip", "(J)J", ByteArrayInputStream_skip},
+    {"java/io/ByteArrayInputStream", "available", "()I", ByteArrayInputStream_available},
+    /* InnerActive Ad SDK bypass */
+    {"InnerActiveSDK/IASDK", "start", NULL, Adware_returnOne},
+    {"InnerActiveSDK/IASDK", "displayAd", NULL, Adware_returnZero},
+    {"InnerActiveSDK/IASDK", "exitApp", NULL, Adware_returnZero},
+
+    /* Flurry Mobile Analytics bypass */
+    {"com/flurry/javame/FlurryAgent", "onStartApp", NULL, Adware_noop},
+    {"com/flurry/javame/FlurryAgent", "onPauseApp", NULL, Adware_noop},
+    {"com/flurry/javame/FlurryAgent", "onDestroyApp", NULL, Adware_noop},
+    {"com/flurry/javame/FlurryAgent", "onEvent", NULL, Adware_noop},
+    {"com/flurry/javame/FlurryAgent", "onError", NULL, Adware_noop},
+    {"com/flurry/javame/FlurryAgent", "run", NULL, Adware_noop},
+
     {"java/lang/Object", "getClass", NULL, Object_getClass},
     {"java/lang/Object", "hashCode", NULL, Object_hashCode},
     {"java/lang/Object", "clone", NULL, Object_clone},

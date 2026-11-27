@@ -1330,6 +1330,13 @@ int unzReadCurrentFile(unzFile file, voidp buf, unsigned len) {
 				: RG_INFLATE_ERROR;
 
 			size_t produced = outBefore - outAvail;
+			// A member whose deflate stream is longer than the size recorded in the
+			// central directory (or a corrupt header) would underflow this counter
+			// and keep the loop alive on garbage; treat it as a bad archive.
+			if (produced > pfile_in_zip_read_info->rest_read_uncompressed) {
+				err = UNZ_BADZIPFILE;
+				break;
+			}
 			pfile_in_zip_read_info->stream.next_in = (Bytef *)inPtr;
 			pfile_in_zip_read_info->stream.avail_in = (uInt)inAvail;
 			pfile_in_zip_read_info->stream.next_out = (Bytef *)outPtr;

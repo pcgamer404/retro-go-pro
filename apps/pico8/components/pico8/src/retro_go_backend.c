@@ -268,13 +268,36 @@ void gfx_flip(void)
             }
         }
     } else {
-        for (int y = 0; y < 128; ++y) {
-            const uint8_t *s = src + y * 64;
-            uint8_t *d = dst + y * stride;
-            for (int x = 0; x < 64; ++x) {
-                const uint8_t packed = s[x];
-                d[x * 2] = packed & 0x0f;
-                d[x * 2 + 1] = packed >> 4;
+        // Unscaled present path: expand each packed byte into two adjacent
+        // screen pixels. A 256-entry table turns the per-pixel masking into a
+        // table load, and memcpy keeps the two-byte store in one instruction
+        // without type-punning the surface buffer. Fall back to bytes when the
+        // row stride is odd so the 16-bit store stays aligned.
+        static uint16_t expand[256];
+        static bool expand_ready = false;
+        if (!expand_ready) {
+            for (int i = 0; i < 256; ++i)
+                expand[i] = (uint16_t)((i & 0x0f) | ((i >> 4) << 8));
+            expand_ready = true;
+        }
+        if ((stride & 1) == 0) {
+            for (int y = 0; y < 128; ++y) {
+                const uint8_t *s = src + y * 64;
+                uint8_t *d = dst + y * stride;
+                for (int x = 0; x < 64; ++x) {
+                    const uint16_t pair = expand[s[x]];
+                    memcpy(d + x * 2, &pair, sizeof(pair));
+                }
+            }
+        } else {
+            for (int y = 0; y < 128; ++y) {
+                const uint8_t *s = src + y * 64;
+                uint8_t *d = dst + y * stride;
+                for (int x = 0; x < 64; ++x) {
+                    const uint8_t packed = s[x];
+                    d[x * 2] = packed & 0x0f;
+                    d[x * 2 + 1] = packed >> 4;
+                }
             }
         }
     }

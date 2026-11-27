@@ -2322,7 +2322,7 @@ void rg_gui_game_menu(void)
     const rg_app_t *app = rg_system_get_app();
     /* NanoJava wants emulator settings as a row inside the game menu.
      * Preserve standard dedicated-OPTION behavior for all other apps. */
-    bool nanojava_menu = app && app->configNs && strcmp(app->configNs, "j2me-go") == 0;
+    bool nanojava_menu = app && app->configNs && (strcmp(app->configNs, "j2me-go") == 0 || strcmp(app->configNs, "j2me-dynarec") == 0);
     bool have_option_btn = rg_input_key_is_present(RG_KEY_OPTION) && !nanojava_menu;
     const rg_gui_option_t choices[] = {
         {1000, _("Save & Continue"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},

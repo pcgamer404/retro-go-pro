@@ -613,6 +613,7 @@ extern const struct GameDriver driver_wofm;
 extern const struct GameDriver driver_wofu;
 extern const struct GameDriver driver_sf2hf;
 extern const struct GameDriver driver_sf2hfu;
+extern const struct GameDriver driver_dinom;
 extern const struct GameDriver driver_dinou;
 extern const struct GameDriver driver_dinoa;
 extern const struct GameDriver driver_punisheru;
@@ -1229,6 +1230,7 @@ const struct GameDriver *drivers[] = {
 	&driver_wofu,
 	&driver_sf2hf,
 	&driver_sf2hfu,
+	&driver_dinom,
 	&driver_dinou,
 	&driver_dinoa,
 	&driver_punisheru,

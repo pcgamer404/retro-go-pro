@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "sotn-go",
+  "title": "Castlevania: SotN",
+  "version": "",
+  "launch_mode": "direct",
+  "rom_extensions": [
+    "txt"
+  ],
+  "rom_folder": "sotn",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

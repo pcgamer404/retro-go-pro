@@ -2079,17 +2079,38 @@ int _lua_rnd(lua_State* L) {
     return 1;
 }
 
+// Resolve the 0x5f54 sprite-sheet relocation. Mirrors
+// p8_relocated_sprite_base() (the renderer's version) so sget()/sset()
+// observe the same sheet that spr()/sspr() draw from. Returns the sheet's
+// byte address in PICO-8 RAM, or 0 for the default in-BSS sheet.
+static inline uint32_t p8_sheet_base(void) {
+    if (ram[0x5f54] == 0) return 0;
+    const uint32_t candidate = (uint32_t)ram[0x5f54] << 8;
+    return candidate <= P8_RAM_SIZE - 0x2000u ? candidate : 0;
+}
+
 inline uint8_t _sget(int16_t x, int16_t y) {
     if (x < 0 || x > 127 || y < 0 || y > 127)
         return 0;
-    return spritesheet.sprite_data[y*128+x];
+    const uint32_t base = p8_sheet_base();
+    if (base == 0)
+        return spritesheet.sprite_data[y*128+x];
+    // Relocated sheet: same nibble packing, but read from the remapped page
+    // (which may live in upper RAM, hence p8_ram_read rather than a direct
+    // array index).
+    const uint32_t nibble = (uint32_t)y * 128u + (uint32_t)x;
+    const uint8_t packed = p8_ram_read(base + (nibble >> 1));
+    return (nibble & 1u) ? (packed >> 4) : (packed & 0x0f);
 }
 int _lua_sset(lua_State* L) {
     int16_t x = p8_checkinteger(L, 1);
     int16_t y = p8_checkinteger(L, 2);
     int16_t c = p8_optinteger(L, 3, drawstate.pen_color);
+    // Same 0x5f54 relocation as sget(): a cart that moved the sheet expects
+    // sset() to write into the moved copy, not into map/GFX1 memory.
+    const uint32_t sheet_base = p8_sheet_base();
 	if(x>=0 && x<128 && y>=0 && y<128) {
-		uint32_t addr = (uint32_t)y * 64 + (uint32_t)x / 2;
+		uint32_t addr = sheet_base + (uint32_t)y * 64 + (uint32_t)x / 2;
 		uint8_t value = p8_ram_read(addr);
 		if (x & 1) value = (uint8_t)((value & 0x0f) | ((c & 0x0f) << 4));
 		else value = (uint8_t)((value & 0xf0) | (c & 0x0f));
@@ -2242,7 +2263,8 @@ int _lua_dget(lua_State* L) {
     const int idx = p8_checkinteger(L, 1);
     // Bounds-check: cartdata is 64 uint32_t entries. Mirror _lua_dset's guard
     // so an out-of-range idx returns 0 instead of OOB-reading adjacent BSS.
-    if (idx >= 64) {
+    // The negative case matters: dget(-1) used to read cartdata[-1].
+    if (idx < 0 || idx >= 64) {
         lua_pushinteger(L, 0);
         return 1;
     }
@@ -4226,6 +4248,37 @@ void _render(Spritesheet* s, uint16_t sx, uint16_t sy, int16_t x0, int16_t y0, i
         return;
     }
 
+    // Fast path for the usual destination: the default screen buffer
+    // (0x5f55 == 0x60). put_pixel_mapped_unchecked() reloads 0x5f55 and
+    // re-tests it for every pixel; resolving it once per sprite removes a
+    // RAM load and a compare from the innermost loop. The store itself is
+    // byte-identical to that helper's screen branch, including the nibble
+    // read-modify-write when the neighbouring pixel shares the byte.
+    if (ram[0x5f55] == 0x60) {
+        const int run = xmax - xmin;
+        const int dst_x_base = dst_x + xmin;
+        for (int y = ymin; y < ymax; ++y) {
+            const int source_y = flip_y ? (sprite_h - 1 - y) : y;
+            const uint8_t *source = s->sprite_data +
+                (sy + source_y) * 128 + sx;
+            uint8_t *row = frontbuffer + ((uint16_t)(dst_y + y) << 6);
+            for (int i = 0; i < run; ++i) {
+                const int x = xmin + i;
+                const uint8_t value = source[flip_x ? (sprite_w - 1 - x) : x];
+                if (drawstate.transparent[value]) continue;
+                const uint8_t mapped = override_color
+                    ? mapped_override : pal_map[value & 0x0f];
+                const int px = dst_x_base + i;
+                uint8_t *byte = row + (px >> 1);
+                if (px & 1)
+                    *byte = (uint8_t)((*byte & 0x0f) | (mapped << 4));
+                else
+                    *byte = (uint8_t)((*byte & 0xf0) | mapped);
+            }
+        }
+        return;
+    }
+
     for (int y = ymin; y < ymax; ++y) {
         const int source_y = flip_y ? (sprite_h - 1 - y) : y;
         const uint8_t *source = s->sprite_data +
@@ -4303,14 +4356,22 @@ void _render(Spritesheet* s, uint16_t sx, uint16_t sy, int16_t x0, int16_t y0, i
 }
 
 inline void render_many(Spritesheet* s, uint16_t n, int16_t x0, int16_t y0, int paletteIdx, bool flip_x, bool flip_y, z8::fix32 width, z8::fix32 height) {
-    const uint8_t xIndex = n % 16;
-    const uint8_t yIndex = n / 16;
+    // The sheet is 16x16 sprites; mask instead of dividing so an oversized
+    // sprite number (n >= 256, e.g. from a corrupt cart or an editor-style
+    // index) selects a real sheet row rather than wrapping yIndex to 0 and
+    // redrawing sprite 0 from a later row.
+    const uint8_t xIndex = (uint8_t)(n & 0x0f);
+    const uint8_t yIndex = (uint8_t)((n >> 4) & 0x0f);
     _render(s, xIndex*8, yIndex*8, x0, y0, paletteIdx, flip_x, flip_y, width, height);
 }
 
 inline void render(Spritesheet* s, uint16_t n, uint16_t x0, uint16_t y0, int paletteIdx, bool flip_x, bool flip_y) {
-    const uint8_t xIndex = n % 16;
-    const uint8_t yIndex = n / 16;
+    // The sheet is 16x16 sprites; mask instead of dividing so an oversized
+    // sprite number (n >= 256, e.g. from a corrupt cart or an editor-style
+    // index) selects a real sheet row rather than wrapping yIndex to 0 and
+    // redrawing sprite 0 from a later row.
+    const uint8_t xIndex = (uint8_t)(n & 0x0f);
+    const uint8_t yIndex = (uint8_t)((n >> 4) & 0x0f);
     // The trailing `1, 1` are z8::fix32 width/height arguments; cast through
     // int32_t to disambiguate the ctor from `int` literal `1` in C++.
     _render(s, xIndex*8, yIndex*8, x0, y0, paletteIdx, flip_x, flip_y,

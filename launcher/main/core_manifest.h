@@ -29,10 +29,7 @@
 #define CORE_DATE_LEN         16
 #define CORE_TIME_LEN         16
 
-/* Hold this pin low at power-on to wipe the manifest and boot the launcher.
- * GPIO 5 is RG_KEY_SELECT on the my-handheld target. */
-#define CORE_WIPE_GPIO        5
-#define CORE_WIPE_SECONDS     2
+/* Nothing wipes the manifest at power-on any more: see coreboot.c. */
 
 /* core_entry_t.flags: bit 0 was CORE_FLAG_PORT ("installed by the RG Ports
  * tab"). The tab is gone, the bit is ignored, and entries that still have it

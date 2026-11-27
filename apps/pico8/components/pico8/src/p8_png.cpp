@@ -12,12 +12,15 @@
 //   2. LSB unpack          -- 2 bits/channel * 4 channels per pixel =
 //                             1 cart byte per pixel. 32 KB cart = 0x8000 B.
 //      Auto-detect: the two known Lexaloffle formats disagree on which
-//      channel goes in the low 2 bits of each cart byte (R vs B). We
-//      try the canonical (R in low bits, RGBA order) first -- it's the
-//      spec documented in zepto8 / picotool / PICO-8 wiki -- and fall
-//      back to the thumbyp8 alternate (A in high bits, ARGB order) if
-//      the Lua header at cart[0x4300] doesn't sniff as a known
-//      compression marker.
+//      channel goes in the low 2 bits of each cart byte (R vs B). The
+//      canonical layout (R in low bits, RGBA order, as documented by
+//      zepto8 / picotool / the PICO-8 wiki) is tried first and wins
+//      immediately when its Lua header at cart[0x4300] carries a known
+//      compression marker (":c:\0" / "\0pxa"). Otherwise the thumbyp8
+//      alternate (A in high bits, ARGB order) is unpacked and whichever
+//      layout yields more plausible Lua *text* is kept. Raw (uncompressed)
+//      code can legitimately embed P8SCII control bytes inside strings,
+//      so the decision is a weighted score, not an "all printable" test.
 //   3. Lua inflate         -- dispatch on cart[0x4300..0x4303]:
 //                                ":c:\0"  -> V1 LZ77 (this code)
 //                                "\0pxa"  -> PXA MTF+bitstream (this code)
@@ -32,10 +35,9 @@
 //        __map__    <8192  nibbles from cart[0x2000..0x2FFF]>
 //      Order and section headers match what ``p8_text_parser.cpp`` reads.
 //
-// We deliberately skip __music__ and __label__: those sections don't
-// have any runtime effect that crashes the audio task on missing
-// data. Music is only consumed when the cart explicitly calls
-// music(); labels are only loaded by `_load_label` style APIs.
+// __music__ *is* emitted so music() patterns and the loop bits they carry
+// keep working for BBS carts. __label__ is skipped: labels are only read by
+// `_load_label`-style APIs and have no runtime effect here.
 //
 // __sfx__ IS emitted below: emitting zero-init sfx[N].duration
 // entries across all 64 slots would trip Core 1's audio task with
@@ -111,9 +113,29 @@ extern "C" {
 #include <lodepng.h>
 }
 
+#if defined(ESP_PLATFORM)
+#include <esp_heap_caps.h>
+#endif
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+// The PNG decode path is the memory peak of an app start: a 160x205 RGBA
+// image is ~128 KB, the stego cart another 32 KB, the inflated Lua up to
+// 64 KB and the synthesized .p8 text ~45 KB. On the ESP32-S3 target all of
+// those must come from PSRAM, or a plain malloc() of the 32 KB cart lands in
+// the ~170 KB internal heap that the Lua state needs right afterwards.
+static void *p8png_alloc(size_t n)
+{
+#if defined(ESP_PLATFORM)
+    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (p) return p;
+#endif
+    return malloc(n);
+}
+// p8png_alloc() results are released with free(): ESP-IDF's free() dispatches
+// to the owning heap, so the PSRAM and internal fallback cases both work.
 
 // PNG signature per RFC 2083: "\x89PNG\r\n\x1a\n".
 static const uint8_t P8_PNG_SIG[8] = {
@@ -235,105 +257,101 @@ static P8LuaKind sniff_lua_marker(const uint8_t *lua_header)
     return P8_LUA_NONE;
 }
 
-// Raw PICO-8 Lua is text at its beginning, but quoted strings may contain
-// arbitrary P8SCII bytes. Validate only a 32-byte prefix: long enough that
-// a wrong bit-order formula is extremely unlikely to pass accidentally,
-// while remaining before embedded cart data in real raw-code exports.
-static bool looks_like_raw_lua(const uint8_t *cart, int cart_len_bytes)
-{
-    const int start = P8_LUA_START;
-    const int prefix_end = start + 32 < cart_len_bytes
-                         ? start + 32 : cart_len_bytes;
-    int non_whitespace = 0;
-    bool plausible_start = false;
+// Raw PICO-8 Lua is text at its beginning, but quoted strings and inline
+// P8SCII escapes may contain arbitrary control bytes -- a shipped cart opens
+// with `function _init()\n?'\006!5600'`. The previous rule rejected the whole
+// prefix on the first control byte, so valid raw carts were reported as "not a
+// cart". Score the region instead: printable bytes count positively, control
+// bytes negatively, spaces break ties in favour of prose-like source.
+#define P8_LUA_SCORE_BYTES 512
 
-    for (int i = start; i < prefix_end; i++) {
-        uint8_t b = cart[i];
-        if (b == 0x00)
-            return plausible_start && non_whitespace >= 2;
-        if (b == '\t' || b == '\n' || b == '\r' || b == ' ')
-            continue;
-        if (b < 0x20 || b > 0x7e)
-            return false;
-        if (!plausible_start) {
-            // Lua statements normally begin with an identifier/keyword,
-            // a comment, label, or PICO-8's '?' print shorthand.
-            plausible_start = ((b >= 'a' && b <= 'z') ||
-                               (b >= 'A' && b <= 'Z') ||
-                               b == '_' || b == '-' || b == ':' ||
-                               b == '#' || b == '?');
-            if (!plausible_start) return false;
-        }
-        non_whitespace++;
+typedef struct {
+    int printable;
+    int control;
+    int spaces;
+} P8LuaScore;
+
+static P8LuaScore score_lua_region(const uint8_t *src, int max_len)
+{
+    P8LuaScore s = {0, 0, 0};
+    int n = max_len < P8_LUA_SCORE_BYTES ? max_len : P8_LUA_SCORE_BYTES;
+    for (int i = 0; i < n; i++) {
+        uint8_t c = src[i];
+        if (c == 0x00) break;                    // NUL terminates raw source
+        if (c == '\t' || c == '\n' || c == '\r' || (c >= 0x20 && c <= 0x7e))
+            s.printable++;
+        else
+            s.control++;
+        if (c == ' ') s.spaces++;
     }
-    return plausible_start && non_whitespace >= 8;
+    return s;
 }
 
-// Try both formulas. Returns -1 on total failure, 0 or 1 for the
-// formula index that worked. Writes the chosen cart to *cart_out and
-// the Lua kind to *kind_out.
+static int score_value(const P8LuaScore *s)
+{
+    return s->printable - 2 * s->control + 2 * s->spaces;
+}
+
+static bool score_is_plausible(const P8LuaScore *s)
+{
+    // 48 printable characters plus a positive margin. A wrong bit-order mixes
+    // the same pixel bits differently and lands near 40-70% printable with no
+    // spaces, so it fails both tests on every cart seen so far.
+    return s->printable >= 48 && score_value(s) >= 128;
+}
+
+// Try both formulas. Returns -1 on total failure, 0 or 1 for the formula index
+// that worked. The chosen cart stays in *cart_out and the Lua kind in
+// *kind_out.
 //
-// IMPORTANT: this function evaluates BOTH formulas into scratch buffers
-// before deciding. The earlier "canonical short-circuit" tried canonical
-// first and returned "raw" the moment canonical's bytes happened to pass
-// the old whole-source printability check -- which happens easily because V1
-// compressed data and even random-looking RGB bits often fall in the
-// 0x20..0x7E printable range. That meant the alternate formula (which
-// often HAS the real V1/PXA marker for modern BBS carts) was never
-// even examined, and the cart got loaded with garbled Lua. The
-// "evaluate both" strategy below fixes this -- we run canonical and
-// alternate, then promote in priority order:
-//   1. clearest V1/PXA marker win (decisive regardless of printables)
-//   2. clear raw-prefix win (one formula plausible, the other not)
-//   3. both plausible tiebreak (canonical by default)
+// A V1/PXA marker at cart[0x4300] is decisive. Only when neither layout
+// carries a marker are both scored as raw Lua text. At most three unpack
+// passes run, and only one 32 KB cart buffer is ever alive.
 static int unpack_with_auto_detect(const uint8_t *rgba, int w, int h,
-                                    uint8_t *cart_out, P8LuaKind *kind_out)
+                                   uint8_t *cart_out, P8LuaKind *kind_out)
 {
     int n_pixels = w * h;
     if (n_pixels > 0x8000) n_pixels = 0x8000;
     if (n_pixels < P8_LUA_START + 4) return -1;
 
-    uint8_t *cart_a = (uint8_t *)malloc(0x8000);
-    uint8_t *cart_b = (uint8_t *)malloc(0x8000);
-    if (cart_a == NULL || cart_b == NULL) {
-        free(cart_a); free(cart_b);
+    const int region_len = n_pixels - P8_LUA_START;
+
+    lsb_unpack_canonical(rgba, n_pixels, cart_out);
+    P8LuaKind kind = sniff_lua_marker(cart_out + P8_LUA_START);
+    if (kind != P8_LUA_NONE) {
+        *kind_out = kind;
+        return 0;
+    }
+    P8LuaScore score_a = score_lua_region(cart_out + P8_LUA_START, region_len);
+    bool ok_a = score_is_plausible(&score_a);
+
+    lsb_unpack_thumbyp8(rgba, n_pixels, cart_out);
+    kind = sniff_lua_marker(cart_out + P8_LUA_START);
+    if (kind != P8_LUA_NONE) {
+        *kind_out = kind;
+        return 1;
+    }
+    P8LuaScore score_b = score_lua_region(cart_out + P8_LUA_START, region_len);
+    bool ok_b = score_is_plausible(&score_b);
+
+    if (!ok_a && !ok_b) {
+        printf("pico8: .p8.png no Lua marker; text scores canonical=%d "
+               "thumbyp8=%d (printable %d/%d)\n",
+               score_value(&score_a), score_value(&score_b),
+               score_a.printable, score_b.printable);
         return -1;
     }
-    memset(cart_a, 0, 0x8000);
-    memset(cart_b, 0, 0x8000);
 
-    lsb_unpack_canonical(rgba, n_pixels, cart_a);
-    P8LuaKind k_a = sniff_lua_marker(cart_a + P8_LUA_START);
-    bool raw_a = looks_like_raw_lua(cart_a, n_pixels);
-
-    lsb_unpack_thumbyp8(rgba, n_pixels, cart_b);
-    P8LuaKind k_b = sniff_lua_marker(cart_b + P8_LUA_START);
-    bool raw_b = looks_like_raw_lua(cart_b, n_pixels);
-
-    int chosen_formula = -1;
-    P8LuaKind chosen_kind = P8_LUA_NONE;
-    uint8_t *chosen_cart = NULL;
-
-    if (k_a == P8_LUA_V1 || k_a == P8_LUA_PXA) {
-        chosen_formula = 0; chosen_kind = k_a; chosen_cart = cart_a;
-    } else if (k_b == P8_LUA_V1 || k_b == P8_LUA_PXA) {
-        chosen_formula = 1; chosen_kind = k_b; chosen_cart = cart_b;
-    } else if (raw_a && !raw_b) {
-        chosen_formula = 0; chosen_kind = P8_LUA_RAW; chosen_cart = cart_a;
-    } else if (raw_b && !raw_a) {
-        chosen_formula = 1; chosen_kind = P8_LUA_RAW; chosen_cart = cart_b;
-    } else if (raw_a) {
-        chosen_formula = 0; chosen_kind = P8_LUA_RAW; chosen_cart = cart_a;
+    if (ok_b && (!ok_a || score_value(&score_b) > score_value(&score_a))) {
+        *kind_out = P8_LUA_RAW;
+        return 1;
     }
 
-    if (chosen_formula >= 0) {
-        memcpy(cart_out, chosen_cart, 0x8000);
-        *kind_out = chosen_kind;
-        free(cart_a); free(cart_b);
-        return chosen_formula;
-    }
-    free(cart_a); free(cart_b);
-    return -1;
+    // Canonical scored at least as well; its bytes were overwritten by the
+    // alternate pass, so unpack it once more.
+    lsb_unpack_canonical(rgba, n_pixels, cart_out);
+    *kind_out = P8_LUA_RAW;
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -510,8 +528,7 @@ static int inflate_raw(const uint8_t *src, size_t src_len,
     for (size_t i = 0; i < src_len && n + 1 < (size_t)out_max; i++) {
         uint8_t b = src[i];
         if (b == 0x00) break;            // NUL terminates Lua source
-        if (b == 0x00) out[n++] = '\n';  // unreachable; defensive
-        else            out[n++] = (char)b;
+        out[n++] = (char)b;
     }
     return (int)n;
 }
@@ -572,9 +589,14 @@ static int emit_music_of_cart(char *out, const uint8_t *cart)
     int oi = 0;
     for (int p = 0; p < P8_MUSIC_ENTRIES; ++p) {
         const uint8_t *m = cart + P8_MUSIC_START + p * 4;
+        // .p8 flags are one bit per channel (bit c = channel c, set when that
+        // channel's RAM byte has its high bit set). All four channels must be
+        // folded in: dropping m[3] silently cleared channel 3's loop bit on
+        // every re-emit of a pattern that carries one.
         uint8_t flags = (uint8_t)(((m[0] >> 7) & 1)
                        | (((m[1] >> 7) & 1) << 1)
-                       | (((m[2] >> 7) & 1) << 2));
+                       | (((m[2] >> 7) & 1) << 2)
+                       | (((m[3] >> 7) & 1) << 3));
         out[oi++] = HEX[(flags >> 4) & 0x0f];
         out[oi++] = HEX[flags & 0x0f];
         out[oi++] = ' ';
@@ -712,67 +734,34 @@ bool p8_png_extract_text(const uint8_t *data, size_t len,
 
     // 2. LSB extract the 32 KB stego-cart, auto-detecting whether the
     //    cart uses the canonical (R-low, RGBA) formula or the
-    //    thumbyp8 alternate (A-high, ARGB).
-    uint8_t *cart = (uint8_t *)calloc(1, 0x8000);
+    //    thumbyp8 alternate (A-high, ARGB). The buffer lives in PSRAM: a
+    //    plain 32 KB malloc() sits exactly at the internal-heap threshold
+    //    and competes with the Lua state for the ~170 KB DRAM budget.
+    uint8_t *cart = (uint8_t *)p8png_alloc(0x8000);
     if (!cart) {
         free(rgba);
         printf("pico8: .p8.png out of memory (cart buffer)\n");
         return false;
     }
+    // lsb_unpack_*() only writes w*h bytes; clear the rest so that an image
+    // smaller than 0x8000 pixels still yields a fully defined cart. The
+    // repeated unpack passes below also rely on this zero tail.
+    memset(cart, 0, 0x8000);
     P8LuaKind kind = P8_LUA_NONE;
     int formula = unpack_with_auto_detect(rgba, (int)w, (int)h, cart, &kind);
     if (formula < 0) {
-        printf("pico8: .p8.png neither bit-order formula produced a\n"
-               "       recognisable Lua header at RAM[0x4300].\n"
-               "       The PNG might be an image (not a cart) or use a\n"
-               "       PICO-8 export format this build doesn't handle.\n");
+        printf("pico8: .p8.png no usable cartridge data at RAM[0x4300] "
+               "(%ux%u image)\n", w, h);
         free(rgba);
         free(cart);
         return false;
     }
-    // Diagnostic: dump first 8 bytes of cart[0x4300..] hex, under BOTH
-    // formulas. Lets us eyeball the chosen byte layout and compare
-    // against the un-picked formula -- critical when the auto-detect
-    // settles on "raw" but the cart is actually V1/PXA-compressed.
-    // Real V1 marker   =  3a 63 3a 00  (" :c:\0")
-    // Real PXA marker  =  00 70 78 61  (" \0pxa")
-    // Sensible Lua start = "--", "function", "local", "if", "for", ...
-    // Anything else here usually means the bit-order is wrong.
-    //
-    // The "other formula" malloc is 32 KB transient -- well within the
-    // 320 KB internal-DRAM budget on Odroid-Go. Safe to leave in for
-    // debug builds; can be stripped later by gating on a P8_PNG_DEBUG
-    // macro if logging volume becomes a concern.
-    printf("pico8: .p8.png lua header (chosen=%s): %02x %02x %02x %02x %02x %02x %02x %02x\n",
+    printf("pico8: .p8.png %s Lua, %s bit-order, header "
+           "%02x %02x %02x %02x\n",
+           kind == P8_LUA_V1 ? "V1" : kind == P8_LUA_PXA ? "PXA" : "raw",
            formula == 0 ? "canonical" : "thumbyp8-alternate",
            cart[P8_LUA_START+0], cart[P8_LUA_START+1],
-           cart[P8_LUA_START+2], cart[P8_LUA_START+3],
-           cart[P8_LUA_START+4], cart[P8_LUA_START+5],
-           cart[P8_LUA_START+6], cart[P8_LUA_START+7]);
-    {
-        uint8_t *other_cart = (uint8_t *)malloc(0x8000);
-        if (other_cart != NULL) {
-            memset(other_cart, 0, 0x8000);
-            int npix = (int)w * (int)h;
-            if (npix > 0x8000) npix = 0x8000;
-            if (formula == 0)
-                lsb_unpack_thumbyp8(rgba, npix, other_cart);
-            else
-                lsb_unpack_canonical(rgba, npix, other_cart);
-            printf("pico8: .p8.png lua header (other =%s): %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                   formula == 0 ? "thumbyp8-alternate" : "canonical",
-                   other_cart[P8_LUA_START+0], other_cart[P8_LUA_START+1],
-                   other_cart[P8_LUA_START+2], other_cart[P8_LUA_START+3],
-                   other_cart[P8_LUA_START+4], other_cart[P8_LUA_START+5],
-                   other_cart[P8_LUA_START+6], other_cart[P8_LUA_START+7]);
-            free(other_cart);
-        }
-    }
-    printf("pico8: .p8.png Lua format %s (%s bit-order)\n",
-           kind == P8_LUA_V1 ? "V1"
-           : kind == P8_LUA_PXA ? "PXA"
-           : "raw",
-           formula == 0 ? "canonical" : "thumbyp8-alternate");
+           cart[P8_LUA_START+2], cart[P8_LUA_START+3]);
 
     // Nothing beyond this point needs the decoded 160x205 RGBA image. Free
     // its ~128 KB allocation before creating the Lua and synthesized text
@@ -787,7 +776,7 @@ bool p8_png_extract_text(const uint8_t *data, size_t len,
     //    generous buffer (Lua can be up to 64 KB on a maxed-out cart,
     //    and compressed carts at 0x4300 can have raw lengths larger
     //    than the compressed input).
-    char *lua_buf = (char *)malloc(0x10000);
+    char *lua_buf = (char *)p8png_alloc(0x10000);
     if (!lua_buf) {
         free(rgba);
         free(cart);
@@ -848,13 +837,18 @@ bool p8_png_extract_text(const uint8_t *data, size_t len,
     total += strlen("__gff__") + 1;
     total += P8_GFF_BYTES * 2 + 2;
     total += strlen("__map__") + 1;
-    total += P8_MAP_BYTES * 2 + 1;                   // last no trailing \n\n    total += strlen("__sfx__") + 1;                  // "__sfx__\n"
+    total += P8_MAP_BYTES * 2 + 1;                   // last no trailing \n
+    total += strlen("__sfx__") + 1;                  // "__sfx__\n"
     total += P8_SFX_ENTRIES * (P8_SFX_LINE_B + 1);   // 64 lines × (168 hex + '\n')
     total += 1;                                      // trailing '\n' after __sfx__
     total += strlen("__music__") + 1;
     total += P8_MUSIC_ENTRIES * 12 + 1;
 
-    char *text = (char *)malloc(total);
+    // +1 for the NUL written just past the last emitted byte: the parser is
+    // length-driven, but a terminator keeps the buffer safe to hand to any
+    // C-string consumer and makes an off-by-one show up as a harmless byte
+    // instead of a heap-metadata overwrite.
+    char *text = (char *)p8png_alloc(total + 1);
     if (!text) {
         printf("pico8: .p8.png out of memory (text buffer %u B)\n",
                (unsigned)total);
@@ -892,6 +886,7 @@ bool p8_png_extract_text(const uint8_t *data, size_t len,
     off += emit_header(text + off, "__music__");
     off += emit_music_of_cart(text + off, cart);
     text[off++] = '\n';
+    text[off] = '\0';   // buffer was allocated with total + 1
 
     // Diagnostic: first SFX entry's duration byte (slot 0, RAM byte 1)
     // and the first three slot-0 note bytes, so a real-device boot log

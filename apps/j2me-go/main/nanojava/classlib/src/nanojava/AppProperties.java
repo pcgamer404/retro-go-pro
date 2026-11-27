@@ -24,7 +24,46 @@ public final class AppProperties {
                 parse(jad, false);
             }
         }
-        return (String) props.get(key);
+        String val = (String) props.get(key);
+        if (val == null && key != null) {
+            /* Glu titles read their runtime configuration from the JAD.  A jar
+             * copied to a memory card without its JAD (the normal case here)
+             * leaves those keys null, and the Glu launcher then calls
+             * String.equals on the null and dies before the first frame.  The
+             * values below are the neutral standalone configuration: no demo,
+             * no upsell, no WAP portal.  Supplying them only fills gaps; a JAD
+             * or manifest value always wins. */
+            if ("Glu-Wap-Type".equalsIgnoreCase(key))          return "0";
+            if ("Glu-Upsell-Enabled".equalsIgnoreCase(key))    return "false";
+            if ("Glu-Demo-Enabled".equalsIgnoreCase(key))      return "false";
+            if ("Glu-Cheats-Enable".equalsIgnoreCase(key))     return "false";
+            if ("Glu-Ignore-Notify".equalsIgnoreCase(key))     return "true";
+            if ("Glu-Use-Double-Buffer".equalsIgnoreCase(key)) return "true";
+            if ("Glu-Softkey-Reverse".equalsIgnoreCase(key))   return "false";
+            if ("Glu-Locale".equalsIgnoreCase(key))            return "en";
+            if ("Glu-Canvas-Variance".equalsIgnoreCase(key))   return "0";
+            if ("Glu-Idle-Threshold".equalsIgnoreCase(key))    return "0";
+            if ("Glu-Demo-Game-Limit".equalsIgnoreCase(key))   return "0";
+            if ("Glu-Demo-Time-Limit".equalsIgnoreCase(key))   return "0";
+            if ("Glu-Upsell-URL".equalsIgnoreCase(key))        return "";
+            if ("Glu-Demo-URL".equalsIgnoreCase(key))          return "";
+            if ("Glu-Wap-Menu".equalsIgnoreCase(key))          return "";
+            if ("Glu-Logo-Enabled".equalsIgnoreCase(key))      return "false";
+            if ("HAS-BLOOD".equalsIgnoreCase(key))             return "1";
+
+            /* Gameloft titles expect these JAD properties and often crash with
+             * NullPointerException if getAppProperty returns null (e.g. Gangstar 2
+             * calls .trim() on Blood-Censor and Cop-Censor when starting a new game). */
+            if ("Blood-Censor".equalsIgnoreCase(key))          return "0";
+            if ("Cop-Censor".equalsIgnoreCase(key))            return "0";
+            if ("URL-TEMPLATE-GAME".equalsIgnoreCase(key))     return "";
+            if ("URL-GLIVE".equalsIgnoreCase(key))             return "";
+            if ("URL-PT".equalsIgnoreCase(key))                return "";
+            if ("URL-PROMO".equalsIgnoreCase(key))             return "";
+            if ("IGP-CATEGORIES".equalsIgnoreCase(key))        return "";
+            if (key != null && (key.startsWith("URL-") || key.startsWith("url-"))) return "";
+        }
+        return val;
     }
 
     /* Returns the JAD file contents, or null. */

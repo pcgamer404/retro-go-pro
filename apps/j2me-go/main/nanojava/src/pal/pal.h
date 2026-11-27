@@ -47,6 +47,7 @@ void pal_wait(int64_t until_ms);
 void pal_screen_size(int *w, int *h);
 void pal_present(const uint16_t *px, int w, int h);
 void pal_set_telemetry_enabled(bool enabled);
+uint32_t pal_get_total_frames(void);
 
 /* Labels of the commands on the soft keys (NULL = none), for platforms
  * that show the soft keys outside the canvas. */
@@ -60,6 +61,8 @@ void pal_audio_pcm(int slot, const int16_t *pcm, uint32_t samples, uint32_t rate
                    uint32_t start, int volume);
 void pal_audio_stop(int slot);
 void pal_audio_volume(int slot, int volume);
+void pal_audio_shutdown(void);
+void pal_present_shutdown(void);
 
 /* Directory where record stores and settings are kept (no trailing '/'),
  * or NULL when there is no writable storage. */

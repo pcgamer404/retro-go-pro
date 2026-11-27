@@ -103,6 +103,33 @@ int mamego_pick_driver(const char *zip_path, const char *base_name)
             family = drivers[i]->clone_of && !(drivers[i]->clone_of->flags & NOT_A_DRIVER) ? drivers[i]->clone_of : drivers[i];
             break;
         }
+
+    /* If this driver is a clone, its parent zip(s) (e.g. sf2.zip for sf2ce.zip)
+       may be in the same folder: count their files too so split sets match correctly */
+    if (family && strcasecmp(family->name, base_name) != 0)
+    {
+        const struct GameDriver *anc = family;
+        while (anc)
+        {
+            char parent_zip[256];
+            const char *slash = strrchr(zip_path, '/');
+            int dir = slash ? (int)(slash - zip_path) + 1 : 0;
+            snprintf(parent_zip, sizeof(parent_zip), "%.*s%s.zip", dir, zip_path, anc->name);
+            if (strcasecmp(parent_zip, zip_path) != 0 && (zip = openzip(parent_zip)))
+            {
+                struct zipent *ent;
+                while ((ent = readzip(zip)) && n < MAX_ENTRIES)
+                {
+                    list[n] = *ent;
+                    snprintf(names[n], sizeof(names[n]), "%s", ent->name);
+                    list[n].name = names[n];
+                    n++;
+                }
+                closezip(zip);
+            }
+            anc = anc->clone_of && !(anc->clone_of->flags & NOT_A_DRIVER) ? anc->clone_of : NULL;
+        }
+    }
     if (exact < 0)
     {
         /* no driver named like the zip: take any complete set it holds */

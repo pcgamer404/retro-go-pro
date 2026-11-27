@@ -16,6 +16,7 @@ For the full feature set, supported hardware list and general documentation, see
 ## Highlights
 
 - **ROM Store** app: browse and download games directly on-device
+- **Core manager**: install emulator/port cores from the SD card into a shared flash pool
 - **Turbo-fire** and **combo button** controls
 - Simplified **ROM art** placement (drop art right next to your ROMs)
 - Extra emulator cores and game ports beyond stock retro-go
@@ -54,6 +55,38 @@ Drop `retro_go_assistant.py` (or the built `.exe`) next to `rg_tool.py` and run 
 
 ## Additional Features
 
+### Core Manager
+
+Emulator cores and ports no longer need a fixed partition each: they are
+installed into a shared flash pool at runtime. A core is a normal `.bin`, which
+`python rg_tool.py build-core <app>` produces in `cores/`.
+
+1. Copy the `.bin` files to `/sd/cores/` on the SD card.
+2. Launcher **About** → **Core manager**.
+3. **Install from SD** → pick a file. **Boot now** starts it after a restart,
+   **Delete** frees its space, **Format** clears the list.
+
+Installed cores show up as normal launcher tabs.
+
+The list is kept in two flash copies plus `/sd/cores/manifest.bak`. If both
+flash copies get damaged, the launcher restores from the SD copy and logs
+`Core manifest was missing, restored N core(s)`. Nothing erases the list at
+power-on, so a hung game cannot make installed cores disappear — use
+**Delete** / **Format** to remove them.
+
+When updating the firmware:
+
+- `retro-go_<ver>_<target>.img` is a full image; it overwrites the pool, so
+  installed cores must be reinstalled afterwards.
+- `retro-go_<ver>_<target>_partial.img` ends where the pool starts and updates
+  bootloader + launcher only, keeping the installed cores:
+
+  ```bash
+  esptool.py --chip esp32s3 --port COM3 write_flash 0x0 retro-go_<ver>_<target>_partial.img
+  ```
+
+See [CORE_MANAGER.md](CORE_MANAGER.md) for the pool layout and boot path.
+
 ### ROM Store
 
 Browse and download ROMs directly from the device menu. The Store app reads its URL at runtime, so no store address is compiled into the firmware.
@@ -77,6 +110,17 @@ An optional **USB DAC** audio output, aimed at the [ESP32-S3-DevKitC-1 v1.1](htt
 <!-- TODO: add which USB-C port the DAC plugs into and the config.h option that enables it -->
 
 The DevKitC-1 has two USB-C ports (native USB and a USB-UART bridge), so check the [user guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html) for which one is which.
+
+**Earphone buttons** (HID controls on USB-C headsets/adapters that expose them, e.g. the ZedPunch dongle):
+
+| Button | Action |
+|---|---|
+| **+** | volume up (5% steps, repeats while held; also unmutes) |
+| **−** | volume down (same) |
+| **Middle, short press** | mute on/off |
+| **Middle, long press (~0.6 s)** | open the Retro-Go menu / options (same as the Options button in a game) |
+
+The buttons are read from the dongle's HID interface by `components/retro-go/drivers/audio/usb_hid.c`, so they work in every core that uses the USB audio driver, with no per-core changes.
 
 ![ESP32-S3-DevKitC-1 v1.1](docs/esp32-s3-devkitc-1-v1.1.png)
 
@@ -156,6 +200,9 @@ python rg_tool.py --target=my-handheld build-img launcher nes doom
 
 # Clean release build
 python rg_tool.py --target=my-handheld release
+
+# Build one emulator/port core and stage it in cores/ (then copy to /sd/cores)
+python rg_tool.py --target=my-handheld build-core quake2-go
 ```
 
 ### Flashing

@@ -1,0 +1,7 @@
+{
+  "id": "fallout-go",
+  "title": "Fallout",
+  "launch_mode": "rom",
+  "rom_extensions": ["fo"],
+  "rom_folder": "fallout"
+}

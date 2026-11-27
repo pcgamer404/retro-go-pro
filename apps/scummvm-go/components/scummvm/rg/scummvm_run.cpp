@@ -157,6 +157,27 @@ static bool junk_name(const char *n) {
 	return n[0] == '.' || !strcmp(n, "__MACOSX") || !strcmp(n, "Thumbs.db");
 }
 
+// The same test applied to every component of a member path: a Finder "__MACOSX"
+// folder, a ".DS_Store" or an Explorer "Thumbs.db" is not game data, so both the
+// progress pass and the extraction pass skip it (the README promises this).
+static bool junk_member(const char *name) {
+	const char *p = name;
+	while (*p) {
+		while (*p == '/') ++p;
+		const char *q = p;
+		while (*q && *q != '/') ++q;
+		size_t len = (size_t)(q - p);
+		if (len == 0) break;
+		if (p[0] == '.') return true;
+		if (len == 9 && !strncmp(p, "__MACOSX", 9)) return true;
+		if ((len == 9 && !strncmp(p, "Thumbs.db", 9)) ||
+		    (len == 11 && !strncmp(p, "desktop.ini", 11)))
+			return true;
+		p = q;
+	}
+	return false;
+}
+
 static bool file_has_size(const char *path, unsigned long size) {
 	struct stat st;
 	return stat(path, &st) == 0 && S_ISREG(st.st_mode) && (unsigned long)st.st_size == size;
@@ -174,7 +195,7 @@ static bool extract_zip(unzFile zip, const char *dest, bool resume) {
 	uint8_t *buffer = (uint8_t *)malloc(bufSize);
 	if (!buffer) { bufSize = 8192; buffer = (uint8_t *)malloc(bufSize); }
 	bool ok = false;
-	unsigned extracted = 0, entries = 0, skipped = 0;
+	unsigned extracted = 0, entries = 0, skipped = 0, ignored = 0;
 	unsigned long totalKb = 0, doneKb = 0;
 
 	if (!name || !out || !parent || !buffer) {
@@ -191,8 +212,16 @@ static bool extract_zip(unzFile zip, const char *dest, bool resume) {
 
 		// pass 1: total size, so the progress bar has something to measure against
 		rgx_progress(0, 0, 0);
-		for (int e = err; e == 0; e = unzGoToNextFile(zip))
-			totalKb += (unzGetCurrentUncompressedSize(zip) + 1023) / 1024;
+		for (int e = err; e == 0; e = unzGoToNextFile(zip)) {
+			name[0] = 0;
+			name[NAME_CAP] = 0; // the reader does not terminate a full-size name
+			if (unzGetCurrentFileInfo(zip, nullptr, name, NAME_CAP, nullptr, 0, nullptr, 0) == 0 &&
+			    !junk_member(name)) {
+				unsigned long usize = unzGetCurrentUncompressedSize(zip);
+				if (usize != 0xFFFFFFFFUL) // ZIP64 marker: extraction rejects it
+					totalKb += (usize + 1023) / 1024;
+			}
+		}
 		err = unzGoToFirstFile(zip);
 		printf("scummvm: unpacking archive, %lu MB\n", totalKb / 1024);
 		rgx_progress(0, (uint32_t)totalKb, 1);
@@ -216,6 +245,11 @@ static bool extract_zip(unzFile zip, const char *dest, bool resume) {
 				printf("scummvm: refusing unsafe archive member: %s\n", name);
 				goto done;
 			}
+			if (junk_member(name)) {
+				++ignored;
+				err = unzGoToNextFile(zip);
+				continue;
+			}
 
 			bool is_dir = name[len - 1] == '/';
 			int n = snprintf(out, 1536, "%s/%s", dest, name);
@@ -234,6 +268,10 @@ static bool extract_zip(unzFile zip, const char *dest, bool resume) {
 					if (!mkdir_p(parent)) goto done;
 				}
 				unsigned long usize = unzGetCurrentUncompressedSize(zip);
+				if (usize == 0xFFFFFFFFUL) { // ZIP64 "size in extra field" marker
+					printf("scummvm: ZIP64 member size is not supported: %s\n", name);
+					goto done;
+				}
 				if (resume && file_has_size(out, usize)) {
 					++skipped;
 					doneKb += (usize + 1023) / 1024;
@@ -275,7 +313,8 @@ static bool extract_zip(unzFile zip, const char *dest, bool resume) {
 			printf("scummvm: ZIP iteration failed (%d)\n", err);
 			goto done;
 		}
-		printf("scummvm: ZIP contains %u entries, extracted %u files (%u resumed) to %s\n", entries, extracted, skipped, dest);
+		printf("scummvm: ZIP contains %u entries, extracted %u files (%u resumed, %u ignored) to %s\n",
+		       entries, extracted, skipped, ignored, dest);
 		ok = true;
 	}
 

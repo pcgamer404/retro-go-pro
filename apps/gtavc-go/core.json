@@ -1,0 +1,7 @@
+{
+  "id": "gtavc-go",
+  "title": "GTA Vice City",
+  "launch_mode": "rom",
+  "rom_extensions": ["gta", "bin"],
+  "rom_folder": "gtavc"
+}

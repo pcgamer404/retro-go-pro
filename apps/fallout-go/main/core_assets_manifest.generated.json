@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "id": "fallout-go",
+  "title": "Fallout",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "fo"
+  ],
+  "rom_folder": "fallout",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

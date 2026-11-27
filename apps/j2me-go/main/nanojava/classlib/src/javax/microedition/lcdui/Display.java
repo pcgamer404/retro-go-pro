@@ -305,45 +305,50 @@ public class Display {
     void run() {
         int[] ev = new int[2];
         while (running) {
-            /* Deliver everything that is already queued before the next paint.
-             * This loop used to handle one event per iteration, and each
-             * iteration painted first; paint() is by far the most expensive
-             * thing here (a game repaint plus a frame present), so a handful of
-             * quick taps could leave key events sitting in the queue for
-             * seconds. That backlog is the "input lag that comes and goes".
-             * Draining first bounds the delay to one paint, no matter how fast
-             * the player presses. */
-            int type;
-            int budget = 16;
-            while (budget-- > 0 && (type = Events.next(ev, 0)) != Events.NONE) {
-                dispatch(type, ev);
-            }
-
-            if (keyHeld && System.currentTimeMillis() >= nextRepeat) {
-                nextRepeat = System.currentTimeMillis() + REPEAT_RATE;
-                key(KEY_REPEAT, heldKey);
-            }
-
-            if (repaintPending) {
-                paint();
-            }
-            while (serial.size() > 0) {
-                Runnable r = (Runnable) serial.elementAt(0);
-                serial.removeElementAt(0);
-                synchronized (LOCK) {
-                    r.run();
+            try {
+                /* Deliver everything that is already queued before the next paint.
+                 * This loop used to handle one event per iteration, and each
+                 * iteration painted first; paint() is by far the most expensive
+                 * thing here (a game repaint plus a frame present), so a handful of
+                 * quick taps could leave key events sitting in the queue for
+                 * seconds. That backlog is the "input lag that comes and goes".
+                 * Draining first bounds the delay to one paint, no matter how fast
+                 * the player presses. */
+                int type;
+                int budget = 16;
+                while (budget-- > 0 && (type = Events.next(ev, 0)) != Events.NONE) {
+                    dispatch(type, ev);
                 }
-            }
 
-            int timeout = -1;
-            if (repaintPending || serial.size() > 0) {
-                timeout = 0;
-            } else if (keyHeld) {
-                timeout = (int) Math.max(1, nextRepeat - System.currentTimeMillis());
-            }
-            type = Events.next(ev, timeout);
-            if (type != Events.NONE) {
-                dispatch(type, ev);
+                if (keyHeld && System.currentTimeMillis() >= nextRepeat) {
+                    nextRepeat = System.currentTimeMillis() + REPEAT_RATE;
+                    key(KEY_REPEAT, heldKey);
+                }
+
+                if (repaintPending) {
+                    paint();
+                }
+                int serialBatch = serial.size();
+                while (serialBatch-- > 0 && serial.size() > 0) {
+                    Runnable r = (Runnable) serial.elementAt(0);
+                    serial.removeElementAt(0);
+                    synchronized (LOCK) {
+                        r.run();
+                    }
+                }
+
+                int timeout = -1;
+                if (repaintPending || serial.size() > 0) {
+                    timeout = 0;
+                } else if (keyHeld) {
+                    timeout = (int) Math.max(1, nextRepeat - System.currentTimeMillis());
+                }
+                type = Events.next(ev, timeout);
+                if (type != Events.NONE) {
+                    dispatch(type, ev);
+                }
+            } catch (Throwable t) {
+                t.printStackTrace();
             }
         }
     }
@@ -374,6 +379,9 @@ public class Display {
             if (soft && !d.wantsSoftKeys()) {
                 if (type == Events.KEY_DOWN) {
                     softKey(d, code == Canvas.KEY_SOFT_LEFT);
+                }
+                if (d instanceof Canvas && menu == null) {
+                    d.keyEvent(type, code);
                 }
                 return;
             }

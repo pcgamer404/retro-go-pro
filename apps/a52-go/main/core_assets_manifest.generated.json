@@ -9,5 +9,9 @@
     "zip"
   ],
   "rom_folder": "a52",
-  "art": []
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
 }

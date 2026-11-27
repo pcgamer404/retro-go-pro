@@ -30,3 +30,7 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_32B=y
 # and Retro-Go's input task. FreeRTOS configuration only: no effect on the
 # bootloader, the memory map or other apps.
 CONFIG_FREERTOS_HZ=1000
+
+# Increase main task stack to 32 KB so deep Java frames and Retro-Go GUI dialogues / exit don't overflow
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+CONFIG_MAIN_TASK_STACK_SIZE=32768

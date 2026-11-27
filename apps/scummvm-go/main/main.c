@@ -108,8 +108,10 @@ static void scummvm_task(void *arg)
         rg_gui_alert("ScummVM", "Could not read the ZIP file. It may be damaged or not a ZIP.");
     else if (rc == -11)
         rg_gui_alert("ScummVM", "ZIP unpack failed (SD card full, or the ZIP uses ZIP64/Deflate64 or unsafe paths). Re-zip with normal Deflate or Store, or free SD space, then launch again to resume.");
-    else if (rc != 0)
+    else if (rc < 0)
         rg_gui_alert("ScummVM", "No supported game found. Check the files are directly in the folder/ZIP.");
+    else if (rc > 0)
+        rg_gui_alert("ScummVM", "The game stopped with an error. Check the log or try another copy of the game files.");
     rg_system_exit();
 }
 

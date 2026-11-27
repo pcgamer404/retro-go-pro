@@ -16,8 +16,12 @@
 #define P8_SFX_ADDR     0x3200
 #define P8_SFX_SIZE     0x1100
 
-// Optional: prefer PSRAM on ESP32-S3 (Lilka) so we don't blow DRAM.
-#if defined(LILKA_BACKEND) || defined(ESP_BACKEND)
+// Prefer PSRAM on the ESP32-S3 handheld so a large text cart's parse buffers
+// (~100 KB across code/rom/gfx/map/sfx) do not sit in internal RAM while Lua
+// compiles the cart. The old guard tested LILKA_BACKEND/ESP_BACKEND, neither
+// of which is defined by this build (it defines RETRO_GO + ESP_PLATFORM), so
+// every buffer silently fell back to malloc() in internal RAM.
+#if defined(ESP_PLATFORM)
   #include <esp_heap_caps.h>
   static inline void* p8_alloc(size_t n) {
       void* p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -255,6 +259,14 @@ static bool p8_parse_text_impl(const char* data, size_t len,
             char c = data[spans[P8_LUA].start + lua_len - 1];
             if (c == ' ' || c == '\t' || c == '\r' || c == '\n') --lua_len;
             else break;
+        }
+        // GameCart::code_len is uint16_t (init_lua takes a uint16_t length),
+        // so a larger chunk would be cut mid-statement and fail inside Lua
+        // with a misleading syntax error. Reject it before allocating.
+        if (lua_len > 0xFFFFu) {
+            printf("pico8: __lua__ section too large (%u bytes, limit 65535)\n",
+                   (unsigned)lua_len);
+            goto fail;
         }
         out->code_buf = (uint8_t*)p8_alloc(lua_len + 1);
         if (!out->code_buf) goto fail;

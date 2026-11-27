@@ -121,10 +121,16 @@ void apply_fx(SFX* s, Note* n, z8::fix32* volume, z8::fix32* freq, uint16_t offs
                 // is 2*pi*7.5*offset / SAMPLE_RATE because offset is in
                 // samples. `speed` is unused -- vibrato tempo is fixed.
                 const z8::fix32 amp = z8::fix32(int32_t{1}) * z8::fix32(0.05946f);
+                // fix32::sin() takes PICO-8 turns (1.0 == full circle), not
+                // radians. 7.5 Hz means 7.5 turns per second, i.e.
+                // (offset / SAMPLE_RATE) * 7.5 turns. The previous form
+                // passed 2*pi*7.5*offset/SAMPLE_RATE as if it were turns,
+                // which ran the wobble at ~47 Hz instead of 7.5 Hz.
+                // Divide first: 7.5 * offset alone would overflow 16.16 at
+                // the end of a long note.
                 const z8::fix32 t   = z8::fix32::sin(
-                    TWO * z8::fix32(3.14159265f) * z8::fix32(7.5f) *
-                    z8::fix32(int32_t{offset}) /
-                    z8::fix32(int32_t{SAMPLE_RATE}));
+                    (z8::fix32(int32_t{offset}) /
+                     z8::fix32(int32_t{SAMPLE_RATE})) * z8::fix32(7.5f));
                 *freq *= ONE + amp * t;
                 break;
             }

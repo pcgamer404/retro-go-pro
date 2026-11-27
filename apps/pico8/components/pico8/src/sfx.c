@@ -301,7 +301,7 @@ void fill_buffer(int32_t* buf, struct Channel* c, uint16_t samples) {
         last_note_id = note_id;
 
         Note n = _sfx->notes[note_id];
-        z8::fix32 freq = key_to_freq[n.key];
+        z8::fix32 freq = key_to_freq[n.key & 0x3f];
         // fix32 has no operator/(int32_t); cast the int divisor explicitly.
         const z8::fix32 delta = freq / z8::fix32(int32_t{SAMPLE_RATE});
 
@@ -345,22 +345,41 @@ void fill_buffer(int32_t* buf, struct Channel* c, uint16_t samples) {
             reset_channel_instrument(c);
         }
 
+        // Classify the note's effect once instead of entering apply_fx()'s
+        // switch for every sample. FX_NO_EFFECT and FX_DROP (a stub no-op in
+        // apply_fx) leave both volume and frequency untouched, which is the
+        // overwhelmingly common case. FADE_IN/FADE_OUT only scale volume;
+        // SLIDE/VIBRATO/ARP also move the pitch.
+        const uint8_t effect = n.effect;
+        const bool effect_scales_volume =
+            effect == FX_SLIDE || effect == FX_FADE_IN || effect == FX_FADE_OUT;
+        const bool effect_moves_pitch =
+            effect == FX_SLIDE || effect == FX_VIBRATO ||
+            effect == FX_ARP_FAST || effect == FX_ARP_SLOW;
+        const bool apply_effect = effect_scales_volume || effect_moves_pitch;
+        // For a constant-volume note the normalised amplitude is invariant.
+        const z8::fix32 static_norm_vol = VOL_NORMALIZER * z8::fix32(n.volume);
+        // in_note_offset == note_base_delta + _s for every sample of this
+        // note: c->offset was advanced by SAMPLES_PER_DURATION above and is
+        // not modified again inside the inner loop. Hoisting the note-base
+        // multiply out of the loop removes two 32-bit multiplies per sample.
+        const uint32_t note_base_delta =
+            c->offset - (uint32_t)SAMPLES_PER_DURATION
+            - (uint32_t)note_id * (uint32_t)SAMPLES_PER_DURATION
+              * (uint32_t)_sfx->duration;
+
         for (uint16_t _s = 0; _s < SAMPLES_PER_DURATION; _s++) {
             z8::fix32 volume = n.volume;
             z8::fix32 effective_freq = freq;
-            // Per-sample in-note offset:
-            //   c->offset was advanced by SAMPLES_PER_DURATION at sfx.c:64,
-            //   so subtract SPD to rewind to the START of the current
-            //   tick-block, add the inner sample index _s, then subtract
-            //   the note base for a clean per-note ramp domain [0,
-            //   duration*SAMPLES_PER_DURATION).
-            uint16_t in_note_offset = (uint16_t)(
-                c->offset - (uint32_t)SAMPLES_PER_DURATION + (uint32_t)_s
-                - (uint32_t)note_id * (uint32_t)SAMPLES_PER_DURATION * (uint32_t)_sfx->duration);
-            // speed = ticks/note == _sfx->duration per PICO-8 naming;
-            // FX_ARP uses it to halve its arpeggio rate when speed<=8.
-            apply_fx(_sfx, &n, &volume, &effective_freq, in_note_offset,
-                     _sfx->duration, note_id, c->prev_key, c->prev_vol);
+            // Per-sample in-note offset (see note_base_delta above): the
+            // domain is [0, duration*SAMPLES_PER_DURATION).
+            const uint16_t in_note_offset = (uint16_t)(note_base_delta + _s);
+            if (apply_effect) {
+                // speed = ticks/note == _sfx->duration per PICO-8 naming;
+                // FX_ARP uses it to halve its arpeggio rate when speed<=8.
+                apply_fx(_sfx, &n, &volume, &effective_freq, in_note_offset,
+                         _sfx->duration, note_id, c->prev_key, c->prev_vol);
+            }
 
             uint8_t output_waveform = (uint8_t)n_waveform;
             uint8_t output_pitch = n.key;
@@ -414,7 +433,10 @@ void fill_buffer(int32_t* buf, struct Channel* c, uint16_t samples) {
                 ++c->instrument_offset;
             }
 
-            const z8::fix32 norm_vol = VOL_NORMALIZER * volume;
+            const z8::fix32 norm_vol =
+                (custom_instrument || effect_scales_volume)
+                    ? VOL_NORMALIZER * volume
+                    : static_norm_vol;
             const z8::fix32 w = output_waveform == INST_NOISE
                 ? filtered_noise_waveform(c, effective_freq, output_pitch)
                 : waveform(output_waveform, c->phi);
@@ -430,7 +452,13 @@ void fill_buffer(int32_t* buf, struct Channel* c, uint16_t samples) {
             // of the iteration and would not reflect per-sample freq
             // changes; per-sample division is ~4 fix32 ops x 183 samples
             // x 4 channels x ~60 ticks/sec ~= 700k ops/sec on ESP32 Core 1.
-            c->phi += effective_freq / z8::fix32(int32_t{SAMPLE_RATE});
+            // Skip that division when nothing modulates the pitch (or an
+            // instrument does not shift it): the step is then exactly the
+            // `delta` already computed once per note above.
+            if (!custom_instrument && !effect_moves_pitch)
+                c->phi += delta;
+            else
+                c->phi += effective_freq / z8::fix32(int32_t{SAMPLE_RATE});
         }
 
         s += SAMPLES_PER_DURATION - 1;

@@ -1,0 +1,35 @@
+[mapping:devilutionx]
+archive: libdevilutionx.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)
+
+[mapping:devilutionx_sdl]
+archive: libSDL.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)
+
+[mapping:devilutionx_lua]
+archive: liblua_static.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)
+
+[mapping:devilutionx_mpqfs]
+archive: libmpqfs.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)
+
+[mapping:devilutionx_smacker]
+archive: liblibsmackerdec.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)
+
+[mapping:devilutionx_main]
+archive: libmain.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)

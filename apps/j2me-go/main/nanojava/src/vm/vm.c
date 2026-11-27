@@ -2,6 +2,7 @@
  * vm.c - VM start-up: core classes, well-known fields and the boot thread.
  */
 #include "vm.h"
+#include "dynarec.h"
 #include "../pal/pal.h"
 
 VM vm;
@@ -14,6 +15,7 @@ bool vm_init(const VMOptions *opt)
     vm.opt = *opt;
     vm.start_ms = pal_time_ms();
     sym_init();
+    dynarec_init();
     heap_init(opt->heap_size);
     natives_lang_init();
     return true;
@@ -45,6 +47,7 @@ void vm_shutdown(void)
     native_reset();
     res_reset();
     interp_reset();
+    dynarec_shutdown();
     nj_meta_free_all();
     vm_poll_hook = NULL;
     memset(&vm, 0, sizeof vm);

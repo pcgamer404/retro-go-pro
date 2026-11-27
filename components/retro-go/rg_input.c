@@ -64,6 +64,7 @@ static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 static bool input_task_running = false;
 static uint32_t gamepad_state = -1; // _Atomic
 static uint32_t gamepad_mapped = 0;
+static volatile uint32_t injected_keys = 0; // virtual keys (USB earphone buttons), see rg_input_inject_keys
 static rg_battery_t battery_state = {0};
 
 #define UPDATE_GLOBAL_MAP(keymap)                 \
@@ -409,7 +410,7 @@ static void input_task(void *arg)
                     local_gamepad_state &= ~(1 << i);
                 }
             }
-            gamepad_state = local_gamepad_state;
+            gamepad_state = local_gamepad_state | injected_keys;
         }
 
         if (rg_system_timer() >= next_battery_update)
@@ -570,6 +571,11 @@ void rg_input_deinit(void)
 bool rg_input_key_is_present(rg_key_t mask)
 {
     return (gamepad_mapped & mask) == mask;
+}
+
+void rg_input_inject_keys(uint32_t keys)
+{
+    injected_keys = keys;
 }
 
 uint32_t rg_input_read_gamepad(void)

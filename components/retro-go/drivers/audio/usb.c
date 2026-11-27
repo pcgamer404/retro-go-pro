@@ -47,7 +47,12 @@
 #define MAX_OUT_MPS      (FIFO_PTX_LINES * 4)
 _Static_assert(FIFO_RX_LINES + FIFO_NPTX_LINES + FIFO_PTX_LINES <= 200, "USB FIFO split larger than the hardware FIFO");
 
-enum { EV_NEW_DEV = 1, EV_GONE = 2 };
+enum { EV_NEW_DEV = 1, EV_GONE = 2, EV_HID = 4 };
+
+// earphone buttons: usb_hid.c (same USB client, same task)
+void usb_hid_attach(usb_host_client_handle_t client, usb_device_handle_t dev, const usb_config_desc_t *cfg, TaskHandle_t task);
+void usb_hid_detach(void);
+int usb_hid_process(void);
 
 static int64_t idle_until = 0; // no-dongle pacing, see driver_submit()
 
@@ -353,6 +358,7 @@ static void ctl_cb(usb_transfer_t *x)
 
 static void teardown(void)
 {
+    usb_hid_detach();
     u.streaming = false;
     u.stop = true;
     for (int i = 0; i < 100 && u.inflight > 0; i++) // transfers come back with NO_DEVICE / CANCELED
@@ -541,6 +547,7 @@ static void setup_device(uint8_t addr)
     }
     u.streaming = true;
     RG_LOGI("[" TAG_USB "] streaming");
+    usb_hid_attach(u.client, u.dev, cd, u.uac_task);
     return;
 
 fail:
@@ -551,18 +558,23 @@ static void print_status(void);
 
 static void uac_task(void *arg)
 {
+    int64_t next_status = 0;
     for (;;)
     {
         uint32_t ev = 0;
-        if (xTaskNotifyWait(0, UINT32_MAX, &ev, pdMS_TO_TICKS(5000)) != pdTRUE)
-        {
-            print_status();
-            continue;
-        }
+        const int hid_ms = usb_hid_process(); // button events and hold timers
+        const int wait_ms = hid_ms >= 0 && hid_ms < 5000 ? hid_ms : 5000;
+        TickType_t ticks = pdMS_TO_TICKS(wait_ms);
+        xTaskNotifyWait(0, UINT32_MAX, &ev, ticks ? ticks : 1);
         if (ev & EV_GONE)
             teardown();
         if (ev & EV_NEW_DEV)
             setup_device(u.new_addr);
+        if (rg_system_timer() >= next_status)
+        {
+            next_status = rg_system_timer() + 5000000;
+            print_status();
+        }
     }
 }
 

@@ -4,7 +4,10 @@ uint8_t parseChar(char c);
 
 void noteParser(const uint8_t* line, uint8_t sfx_id, Note* notes) {
     for(uint8_t note=0; note<NOTES_PER_SFX; note++) {
-        notes[note].key         = (parseChar(line[note*5+0]) << 4) | parseChar(line[note*5+1]);
+        // PICO-8 clamps the text pitch field to 0..63 and the mixer indexes a
+        // 64-entry frequency table with this key, so mask rather than
+        // trusting the cartridge (a `ff` pitch used to read past the table).
+        notes[note].key         = ((parseChar(line[note*5+0]) << 4) | parseChar(line[note*5+1])) & 0x3f;
         notes[note].waveform    = parseChar(line[note*5+2]);
         notes[note].volume      = parseChar(line[note*5+3]);
         notes[note].effect      = parseChar(line[note*5+4]);
@@ -53,16 +56,22 @@ inline uint8_t parseChar(char c) {
 	case '9':
 	    return 9;
 	case 'a':
+	case 'A':
 	    return 10;
 	case 'b':
+	case 'B':
 	    return 11;
 	case 'c':
+	case 'C':
 	    return 12;
 	case 'd':
+	case 'D':
 	    return 13;
 	case 'e':
+	case 'E':
 	    return 14;
 	case 'f':
+	case 'F':
 	    return 15;
     }
     return 0xAA;

@@ -1,0 +1,7 @@
+{
+  "id": "amiga-go",
+  "title": "Commodore Amiga",
+  "launch_mode": "rom",
+  "rom_extensions": ["adf", "adz", "rp9", "hdf", "zip"],
+  "rom_folder": "amiga"
+}

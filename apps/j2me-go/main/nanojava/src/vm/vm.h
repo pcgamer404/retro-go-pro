@@ -104,7 +104,9 @@ enum {
     ACC_PUBLIC = 0x0001, ACC_PRIVATE = 0x0002, ACC_PROTECTED = 0x0004,
     ACC_STATIC = 0x0008, ACC_FINAL = 0x0010, ACC_SYNCHRONIZED = 0x0020,
     ACC_SUPER = 0x0020, ACC_VOLATILE = 0x0040, ACC_TRANSIENT = 0x0080,
-    ACC_NATIVE = 0x0100, ACC_INTERFACE = 0x0200, ACC_ABSTRACT = 0x0400
+    ACC_NATIVE = 0x0100, ACC_INTERFACE = 0x0200, ACC_ABSTRACT = 0x0400,
+    ACC_JIT_OSR = 0x4000,
+    ACC_JIT_UNSUPPORTED = 0x8000
 };
 
 typedef struct CPEntry {
@@ -160,6 +162,11 @@ struct Method {
     uint16_t        n_lines;
     LineEntry      *lines;
     NativeFn        native;
+    void           *jit_code;     /* Compiled native Xtensa LX7 code (or NULL) */
+    uint32_t        jit_size;     /* Compiled code size in bytes */
+    uint16_t        exec_count;   /* Hotness execution counter */
+    uint8_t         jit_fails;    /* Number of failed compilation attempts */
+    uint8_t         jit_pad;
 };
 
 struct Field {
@@ -241,6 +248,7 @@ struct Thread {
     Frame    *frames;
     int       max_frames;
     int       depth;
+    int       budget;         /* Time-slice budget remaining for interpreter and JIT */
 
     uint8_t   state;
     bool      interrupted;
@@ -350,6 +358,7 @@ Array  *heap_alloc_array(Class *c, jint len);  /* NULL on OOM */
 bool    heap_is_object(const void *p);
 void    heap_gc(void);
 size_t  heap_free_bytes(void);
+size_t  heap_largest_free_bytes(void);
 size_t  heap_total_bytes(void);
 void    heap_set_stack_base(void *base);
 void    heap_add_root(Object **root);
@@ -415,6 +424,9 @@ void    interp_run(Thread *t, int budget);
 #endif
 bool    interp_push_frame(Thread *t, Method *m, Slot *args);
 int     interp_ensure_init(Thread *t, Class *c);  /* 1 ready, 0 retry, -1 exc */
+Class  *resolve_class(Thread *t, Class *cur, uint16_t idx);
+Field  *resolve_field(Thread *t, Class *cur, uint16_t idx);
+Object *resolve_string(Thread *t, Class *cur, uint16_t idx);
 void    vm_throw(Thread *t, Object *exc);
 void    vm_throw_new(Thread *t, const char *cls, const char *msg);
 void    vm_throw_newf(Thread *t, const char *cls, const char *fmt, ...);
@@ -476,6 +488,8 @@ void     res_set_system(struct Zip *z);
 void     res_add_app_zip(struct Zip *z);
 void     res_add_app_dir(const char *dir);
 uint8_t *res_read_app(const char *path, uint32_t *len);   /* malloc'd */
+bool     res_lookup_app(const char *path, uint32_t *len, char *canon, size_t canon_cap);
+int32_t  res_read_app_into(const char *path, uint8_t *dst, uint32_t cap);
 void     res_set_jad(const uint8_t *data, uint32_t len);   /* copied */
 const uint8_t *res_jad(uint32_t *len);                     /* NULL if none */
 

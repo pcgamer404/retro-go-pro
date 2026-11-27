@@ -95,6 +95,7 @@ bool rg_input_key_is_pressed(rg_key_t mask);
 bool rg_input_wait_for_key(rg_key_t mask, bool pressed, int timeout_ms);
 uint32_t rg_input_read_gamepad(void);
 rg_battery_t rg_input_read_battery(void);
+void rg_input_inject_keys(uint32_t keys); // OR'ed into the gamepad state (virtual keys, eg. USB earphone buttons)
 bool rg_input_read_gamepad_raw(uint32_t *out);
 bool rg_input_read_battery_raw(rg_battery_t *out);
 const char *rg_input_get_key_name(rg_key_t key);

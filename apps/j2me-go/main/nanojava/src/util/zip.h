@@ -35,4 +35,9 @@ uint8_t *zip_read(Zip *z, ZipEntry *e, uint32_t *len);
 /* Convenience: find + read. */
 uint8_t *zip_read_name(Zip *z, const char *name, uint32_t *len);
 
+/* Uncompress an entry directly into dst (at most cap bytes).  Returns the
+ * number of bytes written, or -1 when the entry is unknown, too large or
+ * corrupt. */
+int32_t zip_read_into(Zip *z, ZipEntry *e, uint8_t *dst, uint32_t cap);
+
 #endif

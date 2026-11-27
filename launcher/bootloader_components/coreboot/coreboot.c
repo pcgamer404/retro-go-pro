@@ -68,6 +68,14 @@ static bool manifest_save(uint32_t base, int slot, core_manifest_t *m)
     return bootloader_flash_write(base + slot * CORE_MANIFEST_SECTOR, m, sizeof(*m), false) == ESP_OK;
 }
 
+/* There is deliberately no button combination that wipes the manifest here.
+ * retro-go's menu combination is SELECT+START, and that is exactly what a user
+ * holds when a core has hung and they power-cycle the console - an earlier
+ * long-hold wipe on SELECT alone therefore deleted the installed list precisely
+ * when a core misbehaved. Recovery now lives in the launcher (Core manager ->
+ * Delete / Format), which is always reachable because a selected core is only
+ * booted once. */
+
 void bootloader_after_init(void)
 {
     bootloader_state_t bs = {0};
@@ -78,14 +86,6 @@ void bootloader_after_init(void)
 
     /* The pool is laid out immediately after the launcher by rg_tool.py. */
     const uint32_t pool = bs.ota[0].offset + bs.ota[0].size;
-
-    if (bootloader_common_check_long_hold_gpio_level(CORE_WIPE_GPIO,
-                                                     CORE_WIPE_SECONDS,
-                                                     false) == GPIO_LONG_HOLD) {
-        ESP_LOGW(TAG, "wipe requested, erasing core manifest");
-        bootloader_flash_erase_range(pool, CORE_MANIFEST_RESERVED);
-        return;
-    }
 
     core_manifest_t m = {0};
     int slot = manifest_load(pool, &m);

@@ -1,0 +1,7 @@
+{
+  "id": "devilutionx-go",
+  "title": "Diablo",
+  "launch_mode": "rom",
+  "rom_extensions": ["mpq"],
+  "rom_folder": "diablo"
+}

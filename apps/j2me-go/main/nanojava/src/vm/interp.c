@@ -10,6 +10,7 @@
  * leave pc untouched and are executed again later.
  */
 #include "vm.h"
+#include "dynarec.h"
 #include "../pal/pal.h"
 
 #include <math.h>
@@ -18,6 +19,7 @@
 #include <stdlib.h>
 #ifdef ESP_PLATFORM
 #include "esp_cpu.h"
+extern bool s_telemetry_enabled;
 #endif
 
 /* Profiling accumulators, in CPU cycles. A CCOUNT read is a single
@@ -103,12 +105,32 @@ void vm_throw(Thread *t, Object *exc)
 void vm_throw_new(Thread *t, const char *cls, const char *msg)
 {
     if (vm.opt.trace_exceptions) {
-        if (t->depth > 0) {
-            Frame *f = &t->frames[t->depth - 1];
-            nj_log("[throw %s in %s.%s pc=%d: %s]", cls, f->m->cls->name, f->m->name,
-                   f->m->code ? (int)(f->pc - f->m->code) : -1, msg ? msg : "");
+        static int64_t last_throw_ms = 0;
+        static Method *last_m = NULL;
+        static int last_pc = -1;
+        static int throw_suppressed = 0;
+        int64_t now = pal_time_ms();
+        int cur_pc = (t->depth > 0 && t->frames[t->depth - 1].m && t->frames[t->depth - 1].m->code) ?
+                     (int)(t->frames[t->depth - 1].pc - t->frames[t->depth - 1].m->code) : -1;
+        Method *cur_m = (t->depth > 0) ? t->frames[t->depth - 1].m : NULL;
+
+        if (cur_m == last_m && cur_pc == last_pc && (now - last_throw_ms < 1000)) {
+            throw_suppressed++;
         } else {
-            nj_log("[throw %s: %s]", cls, msg ? msg : "");
+            if (throw_suppressed > 0) {
+                nj_log("[throw: %d repeated throws suppressed]", throw_suppressed);
+                throw_suppressed = 0;
+            }
+            last_throw_ms = now;
+            last_m = cur_m;
+            last_pc = cur_pc;
+            if (t->depth > 0) {
+                Frame *f = &t->frames[t->depth - 1];
+                nj_log("[throw %s in %s.%s%s pc=%d: %s]", cls, f->m->cls->name, f->m->name,
+                       f->m->desc ? f->m->desc : "", cur_pc, msg ? msg : "");
+            } else {
+                nj_log("[throw %s: %s]", cls, msg ? msg : "");
+            }
         }
     }
     Class  *c = exception_class(cls);
@@ -148,16 +170,29 @@ static int line_for(Method *m, jlong pc)
 
 static void print_name(const char *internal)
 {
+    if (!internal) {
+        pal_console_write("<unknown>", 9);
+        return;
+    }
     char buf[256];
     size_t i = 0;
     for (; internal[i] && i < sizeof buf - 1; i++)
         buf[i] = internal[i] == '/' ? '.' : internal[i];
+    buf[i] = '\0';
     pal_console_write(buf, (int)i);
 }
 
 void vm_print_exception(Thread *t, Object *exc)
 {
     (void)t;
+    if (!exc) {
+        pal_console_write("<null exception>\n", 17);
+        return;
+    }
+    if (!exc->cls || !exc->cls->name) {
+        pal_console_write("<corrupted exception object>\n", 29);
+        return;
+    }
     char buf[300];
     print_name(exc->cls->name);
     Object *msg = GET_REF(exc, vm.f_Throwable_message);
@@ -174,18 +209,20 @@ void vm_print_exception(Thread *t, Object *exc)
     jlong *d = ARRAY_DATA(trace, jlong);
     for (jint i = 0; i + 1 < ARRAY_LEN(trace); i += 2) {
         Method *m = (Method *)(uintptr_t)d[i];
+        if (!m || !m->cls || !m->cls->name)
+            continue;
         pal_console_write("\tat ", 4);
         print_name(m->cls->name);
         int n;
         if (m->access & ACC_NATIVE) {
-            n = snprintf(buf, sizeof buf, ".%s(Native Method)\n", m->name);
+            n = snprintf(buf, sizeof buf, ".%s(Native Method)\n", m->name ? m->name : "?");
         } else {
             int line = line_for(m, d[i + 1]);
             const char *src = m->cls->source_file ? m->cls->source_file : "Unknown Source";
             if (line >= 0)
-                n = snprintf(buf, sizeof buf, ".%s(%s:%d)\n", m->name, src, line);
+                n = snprintf(buf, sizeof buf, ".%s(%s:%d)\n", m->name ? m->name : "?", src, line);
             else
-                n = snprintf(buf, sizeof buf, ".%s(%s)\n", m->name, src);
+                n = snprintf(buf, sizeof buf, ".%s(%s)\n", m->name ? m->name : "?", src);
         }
         pal_console_write(buf, n < (int)sizeof buf ? n : (int)sizeof buf - 1);
     }
@@ -236,7 +273,7 @@ bool vm_instanceof(Object *o, Class *c)
 
 static const char *cp_utf8(Class *c, uint16_t i) { return c->cp[i].v.utf8; }
 
-static Class *resolve_class(Thread *t, Class *cur, uint16_t idx)
+Class *resolve_class(Thread *t, Class *cur, uint16_t idx)
 {
     CPEntry *e = &cur->cp[idx];
     if (e->resolved)
@@ -258,7 +295,7 @@ static void member_names(Class *cur, CPEntry *e, const char **name, const char *
     *desc = cp_utf8(cur, nat->v.ref.b);
 }
 
-static Field *resolve_field(Thread *t, Class *cur, uint16_t idx)
+Field *resolve_field(Thread *t, Class *cur, uint16_t idx)
 {
     CPEntry *e = &cur->cp[idx];
     if (e->resolved)
@@ -298,7 +335,7 @@ static Method *resolve_method(Thread *t, Class *cur, uint16_t idx)
     return m;
 }
 
-static Object *resolve_string(Thread *t, Class *cur, uint16_t idx)
+Object *resolve_string(Thread *t, Class *cur, uint16_t idx)
 {
     CPEntry *e = &cur->cp[idx];
     if (e->resolved)
@@ -482,12 +519,18 @@ static Method *icache_lookup(const uint8_t *pc, Class *cls, Method *im)
 
 static NJ_HOT void interp_run_impl(Thread *t, int budget)
 {
+    int            frame_top;
+    heap_set_stack_base(&frame_top);
     Frame         *f;
     Method        *m;
     const uint8_t *pc;
     Slot          *sp, *lv;
     CPEntry       *cp;
     Class         *cls;
+    Method        *tm = NULL;
+    Slot          *args = NULL;
+    int            skip = 0;
+    t->budget = budget;
 
 #define LOAD_FRAME() do { f = &t->frames[t->depth - 1]; m = f->m; pc = f->pc; \
         sp = f->sp; lv = f->locals; cls = m->cls; cp = cls->cp; } while (0)
@@ -506,10 +549,52 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
 
 #define THROW(cls_, msg_) do { SAVE_FRAME(); vm_throw_new(t, cls_, msg_); goto exception; } while (0)
 #define CHECK_EXC()       do { if (t->exception) goto exception; } while (0)
-#define NULL_CHECK(o)     do { if (!(o)) THROW("java/lang/NullPointerException", NULL); } while (0)
+/* A reference that is neither NULL nor a plausible pointer means an operand
+ * stack slot holds a stale integer (typically 0x12, a length or small constant
+ * left there by earlier bytecode).  Dereferencing it would hard-fault the
+ * device with no clue where it happened, so report it as a corrupt reference
+ * and throw a Java NullPointerException instead: the exception trace names the
+ * method and pc, and the game may even survive it. */
+#define BAD_REF(o)        (((uintptr_t)(void *)(o) - 1u) < 0x0FFFu)
+#define LOG_BAD_REF(o) do { \
+        SAVE_FRAME(); \
+        nj_log("[badref] %s.%s pc=%d ref=0x%x stack=%d/%d", \
+               m->cls->name, m->name, m->code ? (int)(pc - m->code) : -1, \
+               (unsigned)(uintptr_t)(void *)(o), (int)(sp - lv), \
+               (int)(m->max_locals + m->max_stack)); \
+    } while (0)
+#define NULL_CHECK(o)     do { \
+        if (BAD_REF(o)) { LOG_BAD_REF(o); THROW("java/lang/NullPointerException", "corrupt reference"); } \
+        if (!(o)) THROW("java/lang/NullPointerException", NULL); \
+    } while (0)
 /* Time slices are counted in backward branches and calls, which bounds
  * every loop and recursion without a check on each instruction. */
-#define BRANCH(off)       { int off_ = (off); pc += off_;         if (off_ <= 0 && --budget < 0) { SAVE_FRAME(); return; }         goto dispatch; }
+#if NJ_ENABLE_DYNAREC
+#define JIT_ON_BACKEDGE() do { \
+        if ((m->access & ACC_JIT_OSR) && m->jit_code && !t->exception) { \
+            SAVE_FRAME(); \
+            goto jit_entry; \
+        } else if (!(m->access & ACC_JIT_UNSUPPORTED)) { \
+            m->exec_count += 5; \
+            if (m->exec_count >= JIT_HOT_THRESHOLD) { \
+                dynarec_compile_method(m, t); \
+                if ((m->access & ACC_JIT_OSR) && m->jit_code) { \
+                    SAVE_FRAME(); \
+                    goto jit_entry; \
+                } \
+            } \
+        } \
+    } while (0)
+#else
+#define JIT_ON_BACKEDGE() do {} while (0)
+#endif
+
+#define BRANCH(off)       do { int off_ = (off); pc += off_; \
+        if (off_ <= 0) { \
+            if (--budget < 0) { t->budget = budget; SAVE_FRAME(); return; } \
+            JIT_ON_BACKEDGE(); \
+        } \
+        goto dispatch; } while (0)
 
 #define ARRAY_CHECK(a, idx) do { \
         NULL_CHECK(a); \
@@ -544,6 +629,44 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
     if (t->exception)
         goto exception;
 
+#if NJ_ENABLE_DYNAREC
+jit_entry:
+    if (m->jit_code && !t->exception) {
+        t->budget = budget;
+        int r = dynarec_run_method(m, t, f);
+        budget = t->budget;
+        if (r == JIT_OK) {
+            if (t->depth == 0) {
+                t->state = TS_TERMINATED;
+                return;
+            }
+            LOAD_FRAME();
+            if (--budget < 0) {
+                t->budget = budget;
+                SAVE_FRAME();
+                return;
+            }
+            if (m->jit_code && !t->exception)
+                goto jit_entry;
+            goto dispatch;
+        }
+        if (r == JIT_YIELD_CALL) {
+            LOAD_FRAME();
+            goto dispatch;
+        }
+        if (r == JIT_DEOPT) {
+            LOAD_FRAME();
+            if (budget < 0) {
+                t->budget = budget;
+                SAVE_FRAME();
+                return;
+            }
+            goto dispatch;
+        }
+        LOAD_FRAME();
+    }
+#endif
+
     for (;;) {
     dispatch:
 #ifdef NJ_OPSTATS
@@ -551,14 +674,52 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
 #endif
         switch (*pc) {
         case 0x00: /* nop */ pc++; break;
-        case 0x01: PUSH_R(NULL); pc++; break;
-        case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: case 0x07: case 0x08:
-            PUSH_I(*pc - 0x03); pc++; break;                        /* iconst_<n> */
+        case 0x01:                                                  /* aconst_null */
+            if (pc[1] >= 0x4b && pc[1] <= 0x4e) {                   /* fused: aconst_null + astore_0..3 */
+                lv[pc[1] - 0x4b].ref = NULL;
+                pc += 2;
+                goto dispatch;
+            }
+            PUSH_R(NULL);
+            pc++;
+            break;
+        case 0x02: PUSH_I(-1); pc++; break;                         /* iconst_m1 */
+        case 0x03: case 0x04: case 0x05: case 0x06: case 0x07: case 0x08: { /* iconst_0 .. 5 */
+            int v = *pc - 0x03;
+            if (pc[1] >= 0x3b && pc[1] <= 0x3e) {                   /* fused: iconst_N + istore_0..3 */
+                lv[pc[1] - 0x3b].i = v;
+                pc += 2;
+                goto dispatch;
+            }
+            PUSH_I(v);
+            pc++;
+            break;
+        }
         case 0x09: case 0x0a: PUSH_L(*pc - 0x09); pc++; break;     /* lconst */
         case 0x0b: case 0x0c: case 0x0d: PUSH_F((jfloat)(*pc - 0x0b)); pc++; break;
         case 0x0e: case 0x0f: PUSH_D((jdouble)(*pc - 0x0e)); pc++; break;
-        case 0x10: PUSH_I((jbyte)pc[1]); pc += 2; break;            /* bipush */
-        case 0x11: PUSH_I(S2(pc + 1)); pc += 3; break;              /* sipush */
+        case 0x10: {                                                /* bipush */
+            jint v = (jbyte)pc[1];
+            if (pc[2] >= 0x3b && pc[2] <= 0x3e) {                   /* fused: bipush + istore_0..3 */
+                lv[pc[2] - 0x3b].i = v;
+                pc += 3;
+                goto dispatch;
+            }
+            PUSH_I(v);
+            pc += 2;
+            break;
+        }
+        case 0x11: {                                                /* sipush */
+            jint v = S2(pc + 1);
+            if (pc[3] >= 0x3b && pc[3] <= 0x3e) {                   /* fused: sipush + istore_0..3 */
+                lv[pc[3] - 0x3b].i = v;
+                pc += 4;
+                goto dispatch;
+            }
+            PUSH_I(v);
+            pc += 3;
+            break;
+        }
 
         case 0x12: case 0x13: {                                     /* ldc, ldc_w */
             uint16_t idx = *pc == 0x12 ? pc[1] : U2(pc + 1);
@@ -593,7 +754,41 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
         /* Loads */
         case 0x15: case 0x17: case 0x19: *sp++ = lv[pc[1]]; pc += 2; break;
         case 0x16: case 0x18: sp[0] = lv[pc[1]]; sp[1] = lv[pc[1] + 1]; sp += 2; pc += 2; break;
-        case 0x1a: case 0x1b: case 0x1c: case 0x1d: *sp++ = lv[*pc - 0x1a]; pc++; break;
+        case 0x1a: case 0x1b: case 0x1c: case 0x1d: {              /* iload_0 .. iload_3 */
+            int n1 = *pc - 0x1a;
+            if (pc[1] >= 0x1a && pc[1] <= 0x1d) {
+                int n2 = pc[1] - 0x1a;
+                if (pc[2] == 0x60) {                                /* fused: iload_X + iload_Y + iadd */
+                    PUSH_I((jint)((uint32_t)lv[n1].i + (uint32_t)lv[n2].i));
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x64) {                                /* fused: iload_X + iload_Y + isub */
+                    PUSH_I((jint)((uint32_t)lv[n1].i - (uint32_t)lv[n2].i));
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x68) {                                /* fused: iload_X + iload_Y + imul */
+                    PUSH_I((jint)((uint32_t)lv[n1].i * (uint32_t)lv[n2].i));
+                    pc += 3;
+                    goto dispatch;
+                }
+                /* fused: iload_X + iload_Y */
+                sp[0] = lv[n1];
+                sp[1] = lv[n2];
+                sp += 2;
+                pc += 2;
+                goto dispatch;
+            }
+            if (pc[1] >= 0x3b && pc[1] <= 0x3e) {                   /* fused: iload_X + istore_Y (local copy) */
+                lv[pc[1] - 0x3b] = lv[n1];
+                pc += 2;
+                goto dispatch;
+            }
+            *sp++ = lv[n1];
+            pc++;
+            break;
+        }
         case 0x1e: case 0x1f: case 0x20: case 0x21: {
             int n = *pc - 0x1e; sp[0] = lv[n]; sp[1] = lv[n + 1]; sp += 2; pc++; break;
         }
@@ -601,7 +796,164 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
         case 0x26: case 0x27: case 0x28: case 0x29: {
             int n = *pc - 0x26; sp[0] = lv[n]; sp[1] = lv[n + 1]; sp += 2; pc++; break;
         }
-        case 0x2a: case 0x2b: case 0x2c: case 0x2d: *sp++ = lv[*pc - 0x2a]; pc++; break;
+        case 0x2a: {                                                /* aload_0 */
+            if (pc[1] == 0xca) {                                    /* fused: aload_0 + getfield_quick */
+                Object *o = lv[0].ref;
+                NULL_CHECK(o);
+                *sp++ = FIELDS(o)[pc[2]];
+                pc += 4;
+                if (pc[0] == 0xca) {                                /* chained: aload_0.f1.f2 */
+                    o = sp[-1].ref;
+                    NULL_CHECK(o);
+                    sp[-1] = FIELDS(o)[pc[1]];
+                    pc += 3;
+                }
+                goto dispatch;
+            }
+            if (pc[1] == 0xcb) {                                    /* fused: aload_0 + getfield2_quick (wide) */
+                Object *o = lv[0].ref;
+                NULL_CHECK(o);
+                Slot *s = &FIELDS(o)[pc[2]];
+                sp[0] = s[0];
+                sp[1] = s[1];
+                sp += 2;
+                pc += 4;
+                goto dispatch;
+            }
+            if (pc[1] == 0x2b) {                                    /* fused: aload_0 + aload_1 */
+                sp[0] = lv[0];
+                sp[1] = lv[1];
+                sp += 2;
+                pc += 2;
+                goto dispatch;
+            }
+            if (pc[1] == 0xbe) {                                    /* fused: aload_0 + arraylength */
+                Object *a = lv[0].ref;
+                NULL_CHECK(a);
+                PUSH_I(ARRAY_LEN(a));
+                pc += 2;
+                goto dispatch;
+            }
+            if (pc[1] >= 0x1a && pc[1] <= 0x1d) {
+                int idx = lv[pc[1] - 0x1a].i;
+                if (pc[2] == 0x2e) {                                /* aload_0 + iload_N + iaload */
+                    Object *a = lv[0].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_I(ARRAY_DATA(a, jint)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x33) {                                /* aload_0 + iload_N + baload */
+                    Object *a = lv[0].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_I(ARRAY_DATA(a, jbyte)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x34) {                                /* aload_0 + iload_N + caload */
+                    Object *a = lv[0].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_I(ARRAY_DATA(a, jchar)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x35) {                                /* aload_0 + iload_N + saload */
+                    Object *a = lv[0].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_I(ARRAY_DATA(a, jshort)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x32) {                                /* aload_0 + iload_N + aaload */
+                    Object *a = lv[0].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_R(ARRAY_DATA(a, Object *)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0xcc) {                                /* aload_0 + iload_N + putfield_quick */
+                    Object *o = lv[0].ref;
+                    NULL_CHECK(o);
+                    FIELDS(o)[pc[3]] = lv[pc[1] - 0x1a];
+                    pc += 5;
+                    goto dispatch;
+                }
+            }
+            if (pc[1] >= 0x2b && pc[1] <= 0x2d && pc[2] == 0xcc) {  /* aload_0 + aload_N + putfield_quick */
+                Object *o = lv[0].ref;
+                NULL_CHECK(o);
+                FIELDS(o)[pc[3]] = lv[pc[1] - 0x2a];
+                pc += 5;
+                goto dispatch;
+            }
+            *sp++ = lv[0];
+            pc++;
+            break;
+        }
+        case 0x2b: case 0x2c: case 0x2d: {                          /* aload_1, aload_2, aload_3 */
+            int n = *pc - 0x2a;
+            if (pc[1] == 0xca) {                                    /* fused: aload_N + getfield_quick */
+                Object *o = lv[n].ref;
+                NULL_CHECK(o);
+                *sp++ = FIELDS(o)[pc[2]];
+                pc += 4;
+                if (pc[0] == 0xca) {                                /* chained: aload_N.f1.f2 */
+                    o = sp[-1].ref;
+                    NULL_CHECK(o);
+                    sp[-1] = FIELDS(o)[pc[1]];
+                    pc += 3;
+                }
+                goto dispatch;
+            }
+            if (pc[1] == 0xbe) {                                    /* fused: aload_N + arraylength */
+                Object *a = lv[n].ref;
+                NULL_CHECK(a);
+                PUSH_I(ARRAY_LEN(a));
+                pc += 2;
+                goto dispatch;
+            }
+            if (pc[1] >= 0x1a && pc[1] <= 0x1d) {                   /* fused: aload_N + iload_M + *aload */
+                int idx = lv[pc[1] - 0x1a].i;
+                if (pc[2] == 0x2e) {                                /* aload_N + iload_M + iaload */
+                    Object *a = lv[n].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_I(ARRAY_DATA(a, jint)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x33) {                                /* aload_N + iload_M + baload */
+                    Object *a = lv[n].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_I(ARRAY_DATA(a, jbyte)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x34) {                                /* aload_N + iload_M + caload */
+                    Object *a = lv[n].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_I(ARRAY_DATA(a, jchar)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x35) {                                /* aload_N + iload_M + saload */
+                    Object *a = lv[n].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_I(ARRAY_DATA(a, jshort)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+                if (pc[2] == 0x32) {                                /* aload_N + iload_M + aaload */
+                    Object *a = lv[n].ref;
+                    ARRAY_CHECK(a, idx);
+                    PUSH_R(ARRAY_DATA(a, Object *)[idx]);
+                    pc += 3;
+                    goto dispatch;
+                }
+            }
+            *sp++ = lv[n];
+            pc++;
+            break;
+        }
 
         case 0x2e: ALOAD(jint, PUSH_I); break;                      /* iaload */
         case 0x2f: ALOAD(jlong, PUSH_L); break;                     /* laload */
@@ -746,6 +1098,10 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
 
         case 0x84: {                                                /* iinc */
             lv[pc[1]].i = (jint)((uint32_t)lv[pc[1]].i + (uint32_t)(jint)(jbyte)pc[2]);
+            if (pc[3] == 0xa7) {                                    /* fused: iinc + goto */
+                pc += 3;
+                BRANCH(S2(pc + 1));
+            }
             pc += 3;
             break;
         }
@@ -844,6 +1200,9 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
             Slot *dst = f->locals;
             for (int i = 0; i < n; i++)
                 dst[i] = sp[i - n];
+            /* Clear stale slots in the returning frame so conservative GC cannot retain dead objects */
+            for (Slot *s = dst + n; s < sp; s++)
+                s->raw = 0;
             int skip = f->ret_skip;
             if (--t->depth == 0) {
                 t->state = TS_TERMINATED;
@@ -852,6 +1211,17 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
             LOAD_FRAME();
             sp = dst + n;
             pc += skip;
+            if (--budget < 0) {
+                t->budget = budget;
+                SAVE_FRAME();
+                return;
+            }
+#if NJ_ENABLE_DYNAREC
+            if (m->jit_code && !t->exception) {
+                SAVE_FRAME();
+                goto jit_entry;
+            }
+#endif
             break;
         }
 
@@ -878,11 +1248,19 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
             Object *o = sp[-1].ref;
             NULL_CHECK(o);
             Slot *s = &FIELDS(o)[fl->offset];
-            if (fl->desc[0] == 'J' || fl->desc[0] == 'D') {
+            bool wide = (fl->desc[0] == 'J' || fl->desc[0] == 'D');
+            if (wide) {
                 sp[-1] = s[0];
                 *sp++ = s[1];
             } else {
                 sp[-1] = s[0];
+            }
+            if (fl->offset < 256) {
+                uint8_t *wpc = (uint8_t *)pc;
+                wpc[1] = (uint8_t)fl->offset;
+                wpc[2] = 0;
+                __asm__ __volatile__("" ::: "memory");
+                wpc[0] = wide ? 0xcb : 0xca;
             }
             pc += 3;
             break;
@@ -890,7 +1268,8 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
         case 0xb5: {                                                /* putfield */
             Field *fl;
             RESOLVE(fl, field, resolve_field);
-            if (fl->desc[0] == 'J' || fl->desc[0] == 'D') {
+            bool wide = (fl->desc[0] == 'J' || fl->desc[0] == 'D');
+            if (wide) {
                 Object *o = sp[-3].ref;
                 NULL_CHECK(o);
                 Slot *s = &FIELDS(o)[fl->offset];
@@ -903,6 +1282,13 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
                 FIELDS(o)[fl->offset] = sp[-1];
                 sp -= 2;
             }
+            if (fl->offset < 256) {
+                uint8_t *wpc = (uint8_t *)pc;
+                wpc[1] = (uint8_t)fl->offset;
+                wpc[2] = 0;
+                __asm__ __volatile__("" ::: "memory");
+                wpc[0] = wide ? 0xcd : 0xcc;
+            }
             pc += 3;
             break;
         }
@@ -910,12 +1296,12 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
         /* Invocation */
         case 0xb6: case 0xb7: case 0xb8: case 0xb9: {
             uint8_t op = *pc;
-            int     skip = op == 0xb9 ? 5 : 3;
+            skip = op == 0xb9 ? 5 : 3;
             Method *rm;
             RESOLVE(rm, method, resolve_method);
             SAVE_FRAME();
-            Method *tm = rm;
-            Slot   *args = sp - rm->arg_slots;
+            tm = rm;
+            args = sp - rm->arg_slots;
 
             if (op == 0xb8) {                                       /* invokestatic */
                 ENSURE_INIT(rm->cls);
@@ -925,8 +1311,16 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
                 if (op == 0xb6) {                                   /* invokevirtual */
                     if (rm->cls->flags & CF_INTERFACE)
                         tm = icache_lookup(pc, recv->cls, rm);
-                    else if (!(rm->access & ACC_PRIVATE) && rm->vtable_index < recv->cls->vtable_len)
+                    else if (!(rm->access & ACC_PRIVATE) && rm->vtable_index < recv->cls->vtable_len) {
                         tm = recv->cls->vtable[rm->vtable_index];
+                        if (rm->vtable_index < 256 && rm->arg_slots < 256) {
+                            uint8_t *wpc = (uint8_t *)pc;
+                            wpc[1] = (uint8_t)rm->vtable_index;
+                            wpc[2] = (uint8_t)rm->arg_slots;
+                            __asm__ __volatile__("" ::: "memory");
+                            wpc[0] = 0xce;                          /* invokevirtual_quick */
+                        }
+                    }
                 } else if (op == 0xb9) {                            /* invokeinterface */
                     tm = icache_lookup(pc, recv->cls, rm);
                 } else {                                            /* invokespecial */
@@ -944,6 +1338,133 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
             }
 
         invoke:
+            /* Fast-path: inlined trivial 1-field getters / 2-field difference getters */
+            if (!(tm->access & (ACC_NATIVE | ACC_SYNCHRONIZED)) && tm->code) {
+                if (!(tm->access & ACC_STATIC)) {
+                    if (tm->code_len == 5 && tm->code[0] == 0x2a &&
+                        (tm->code[4] == 0xac || tm->code[4] == 0xb0)) {
+                        if (tm->code[1] == 0xb4) {
+                            Field *fl = resolve_field(t, tm->cls, U2(&tm->code[2]));
+                            if (fl && fl->offset < 256) {
+                                tm->code[1] = 0xca;
+                                tm->code[2] = (uint8_t)fl->offset;
+                                tm->code[3] = 0;
+                            }
+                        }
+                        if (tm->code[1] == 0xca) {
+                            args[0] = FIELDS(args[0].ref)[tm->code[2]];
+                            sp = args + 1;
+                            pc += skip;
+                            break;
+                        }
+                    }
+                    if (tm->code_len == 10 && tm->code[0] == 0x2a &&
+                        tm->code[4] == 0x2a && tm->code[8] == 0x64 && tm->code[9] == 0xac) {
+                        if (tm->code[1] == 0xb4) {
+                            Field *fl = resolve_field(t, tm->cls, U2(&tm->code[2]));
+                            if (fl && fl->offset < 256) {
+                                tm->code[1] = 0xca;
+                                tm->code[2] = (uint8_t)fl->offset;
+                                tm->code[3] = 0;
+                            }
+                        }
+                        if (tm->code[5] == 0xb4) {
+                            Field *fl = resolve_field(t, tm->cls, U2(&tm->code[6]));
+                            if (fl && fl->offset < 256) {
+                                tm->code[5] = 0xca;
+                                tm->code[6] = (uint8_t)fl->offset;
+                                tm->code[7] = 0;
+                            }
+                        }
+                        if (tm->code[1] == 0xca && tm->code[5] == 0xca) {
+                            Object *recv_obj = args[0].ref;
+                            args[0].i = FIELDS(recv_obj)[tm->code[2]].i - FIELDS(recv_obj)[tm->code[6]].i;
+                            sp = args + 1;
+                            pc += skip;
+                            break;
+                        }
+                    }
+                    /* Fast-path: 2-field accumulator (e.g. Graphics.translate(x, y)) */
+                    if (tm->code_len == 21 && tm->code[0] == 0x2a && tm->code[1] == 0x59 &&
+                        tm->code[5] == 0x1b && tm->code[6] == 0x60 &&
+                        tm->code[10] == 0x2a && tm->code[11] == 0x59 &&
+                        tm->code[15] == 0x1c && tm->code[16] == 0x60 && tm->code[20] == 0xb1) {
+                        if (tm->code[2] == 0xb4) {
+                            Field *fl = resolve_field(t, tm->cls, U2(&tm->code[3]));
+                            if (fl && fl->offset < 256) {
+                                tm->code[2] = 0xca;
+                                tm->code[3] = (uint8_t)fl->offset;
+                                tm->code[4] = 0;
+                                tm->code[7] = 0xcc;
+                                tm->code[8] = (uint8_t)fl->offset;
+                                tm->code[9] = 0;
+                            }
+                        }
+                        if (tm->code[12] == 0xb4) {
+                            Field *fl = resolve_field(t, tm->cls, U2(&tm->code[13]));
+                            if (fl && fl->offset < 256) {
+                                tm->code[12] = 0xca;
+                                tm->code[13] = (uint8_t)fl->offset;
+                                tm->code[14] = 0;
+                                tm->code[17] = 0xcc;
+                                tm->code[18] = (uint8_t)fl->offset;
+                                tm->code[19] = 0;
+                            }
+                        }
+                        if (tm->code[2] == 0xca && tm->code[12] == 0xca) {
+                            Object *recv_obj = args[0].ref;
+                            if (recv_obj) {
+                                FIELDS(recv_obj)[tm->code[3]].i += args[1].i;
+                                FIELDS(recv_obj)[tm->code[13]].i += args[2].i;
+                                sp = args;
+                                pc += skip;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    /* Static forwarder getter (e.g. Gameloft b.a, b.b, b.c, b.d) */
+                    if (tm->code_len == 9 && tm->code[0] == 0x2a && tm->code[1] == 0x04 &&
+                        tm->code[2] == 0x3b && tm->code[3] == 0x59 && tm->code[4] == 0x4b &&
+                        (tm->code[5] == 0xb6 || tm->code[5] == 0xce) && tm->code[8] == 0xac) {
+                        uint16_t sub_idx = U2(&tm->code[6]);
+                        CPEntry *cpe = &tm->cls->cp[sub_idx];
+                        if (!cpe->resolved && t)
+                            resolve_method(t, tm->cls, sub_idx);
+                        if (cpe->resolved && cpe->v.method) {
+                            Method *sub_m = cpe->v.method;
+                            if (sub_m->code && sub_m->code_len == 10 &&
+                                sub_m->code[0] == 0x2a && sub_m->code[4] == 0x2a &&
+                                sub_m->code[8] == 0x64 && sub_m->code[9] == 0xac) {
+                                if (sub_m->code[1] == 0xb4) {
+                                    Field *fl = resolve_field(t, sub_m->cls, U2(&sub_m->code[2]));
+                                    if (fl && fl->offset < 256) {
+                                        sub_m->code[1] = 0xca;
+                                        sub_m->code[2] = (uint8_t)fl->offset;
+                                        sub_m->code[3] = 0;
+                                    }
+                                }
+                                if (sub_m->code[5] == 0xb4) {
+                                    Field *fl = resolve_field(t, sub_m->cls, U2(&sub_m->code[6]));
+                                    if (fl && fl->offset < 256) {
+                                        sub_m->code[5] = 0xca;
+                                        sub_m->code[6] = (uint8_t)fl->offset;
+                                        sub_m->code[7] = 0;
+                                    }
+                                }
+                                if (sub_m->code[1] == 0xca && sub_m->code[5] == 0xca) {
+                                    Object *recv_obj = args[0].ref;
+                                    args[0].i = FIELDS(recv_obj)[sub_m->code[2]].i - FIELDS(recv_obj)[sub_m->code[6]].i;
+                                    sp = args + 1;
+                                    pc += skip;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (tm->access & ACC_NATIVE) {
                 if (!tm->native) {
                     SAVE_FRAME();
@@ -955,11 +1476,14 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
                 ret[0].raw = ret[1].raw = 0;
                 int depth0 = t->depth;
 #ifdef ESP_PLATFORM
-                uint32_t native_start_cyc = esp_cpu_get_cycle_count();
+                uint32_t native_start_cyc = 0;
+                if (__builtin_expect(s_telemetry_enabled, 0)) {
+                    native_start_cyc = esp_cpu_get_cycle_count();
+                }
 #endif
                 int r = tm->native(t, args, ret);
 #ifdef ESP_PLATFORM
-                {
+                if (__builtin_expect(s_telemetry_enabled, 0)) {
                     uint32_t dcyc = (uint32_t)(esp_cpu_get_cycle_count() - native_start_cyc);
                     nj_profile_native_cyc += dcyc;
                     NjNativeStat *st = &nj_native_stats[((uintptr_t)tm->native >> 2) &
@@ -977,6 +1501,7 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
                 }
 #endif
                 if (t->exception) {
+                    ret[0].raw = ret[1].raw = 0;
                     t->native_phase = 0;
                     if (t->depth != depth0)
                         LOAD_FRAME();
@@ -986,10 +1511,12 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
                     sp = args;
                     for (int i = 0; i < tm->ret_slots; i++)
                         *sp++ = ret[i];
+                    ret[0].raw = ret[1].raw = 0;
                     pc += skip;
                     break;
                 }
                 if (r == NATIVE_BLOCK) {
+                    ret[0].raw = ret[1].raw = 0;
                     if (t->depth != depth0) {
                         LOAD_FRAME();
                         break;
@@ -1001,6 +1528,7 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
                 sp = args;
                 for (int i = 0; i < tm->ret_slots; i++)
                     *sp++ = ret[i];
+                ret[0].raw = ret[1].raw = 0;
                 for (int i = 0; i < t->tail_nargs; i++)
                     *sp++ = t->tail_args[i];
                 tm = t->tail_method;
@@ -1038,10 +1566,21 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
             t->frames[t->depth - 1].lock = lock;
             t->frames[t->depth - 1].ret_skip = (uint8_t)skip;
             LOAD_FRAME();
+#if NJ_ENABLE_DYNAREC
+            if (!(m->access & ACC_JIT_UNSUPPORTED) && ++m->exec_count >= JIT_HOT_THRESHOLD && !m->jit_code) {
+                dynarec_compile_method(m, t);
+            }
+#endif
             if (--budget < 0) {
+                t->budget = budget;
                 SAVE_FRAME();
                 return;
             }
+#if NJ_ENABLE_DYNAREC
+            if (m->jit_code && !t->exception) {
+                goto jit_entry;
+            }
+#endif
             break;
         }
 
@@ -1100,7 +1639,12 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
             Class *c = resolve_class(t, cls, U2(pc + 1));
             if (!c) goto exception;
             Object *o = sp[-1].ref;
-            if (*pc == 0xc0) {
+            if (BAD_REF(o)) {
+                LOG_BAD_REF(o);
+                if (*pc == 0xc0)
+                    THROW("java/lang/ClassCastException", "corrupt reference");
+                sp[-1].i = 0;
+            } else if (*pc == 0xc0) {
                 if (o && !class_assignable(o->cls, c)) {
                     char msg[200];
                     snprintf(msg, sizeof msg, "%s cannot be cast to %s", o->cls->name, c->name);
@@ -1168,12 +1712,77 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
             break;
         }
 
+        /* Quickened instructions (Sun KVM style) */
+        case 0xca: {                                                /* getfield_quick */
+            Object *o = sp[-1].ref;
+            NULL_CHECK(o);
+            sp[-1] = FIELDS(o)[pc[1]];
+            if (pc[3] == 0xca) {                                    /* chained: o.f1.f2 */
+                o = sp[-1].ref;
+                NULL_CHECK(o);
+                sp[-1] = FIELDS(o)[pc[4]];
+                pc += 6;
+                goto dispatch;
+            }
+            pc += 3;
+            break;
+        }
+        case 0xcb: {                                                /* getfield2_quick (wide) */
+            Object *o = sp[-1].ref;
+            NULL_CHECK(o);
+            Slot *s = &FIELDS(o)[pc[1]];
+            sp[-1] = s[0];
+            *sp++ = s[1];
+            pc += 3;
+            break;
+        }
+        case 0xcc: {                                                /* putfield_quick */
+            Object *o = sp[-2].ref;
+            NULL_CHECK(o);
+            FIELDS(o)[pc[1]] = sp[-1];
+            sp -= 2;
+            pc += 3;
+            break;
+        }
+        case 0xcd: {                                                /* putfield2_quick (wide) */
+            Object *o = sp[-3].ref;
+            NULL_CHECK(o);
+            Slot *s = &FIELDS(o)[pc[1]];
+            s[0] = sp[-2];
+            s[1] = sp[-1];
+            sp -= 3;
+            pc += 3;
+            break;
+        }
+        case 0xce: {                                                /* invokevirtual_quick */
+            skip = 3;
+            SAVE_FRAME();
+            args = sp - pc[2];
+            Object *recv = args[0].ref;
+            NULL_CHECK(recv);
+            uint8_t vt_idx = pc[1];
+            if (vt_idx < recv->cls->vtable_len) {
+                tm = recv->cls->vtable[vt_idx];
+            } else {
+                vm_throw_newf(t, "java/lang/IncompatibleClassChangeError", "%s vtable[%d]",
+                              recv->cls->name, (int)vt_idx);
+                goto exception;
+            }
+            goto invoke;
+        }
+
         default:
             SAVE_FRAME();
             vm_throw_newf(t, "java/lang/VerifyError", "illegal opcode 0x%02x in %s.%s",
                           *pc, cls->name, m->name);
             goto exception;
         }
+#if NJ_ENABLE_DYNAREC
+        if (m->jit_code && !t->exception) {
+            SAVE_FRAME();
+            goto jit_entry;
+        }
+#endif
         continue;
 
     exception: {
@@ -1211,16 +1820,20 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
                     monitor_exit(t, f->lock);
                 if (m->name == S_clinit)
                     finish_clinit(m, false);
+                if (f->sp > f->locals) {
+                    for (Slot *s = f->locals; s < f->sp; s++)
+                        s->raw = 0;
+                }
                 if (--t->depth == 0) {
                     t->exception = NULL;
                     vm.uncaught = true;
                     vm.uncaught_count++;
                     nj_log("Uncaught exception in thread:");
                     vm_print_exception(t, exc);
-                    /* A 3D title dies here because the M3G API is not part of
+                    /* A 3D title dies here because the M3G / MascotCapsule 3D API is not part of
                      * this build. Say so: otherwise the last loading frame
                      * stays on screen and looks like a hang. */
-                    if (exc->cls && exc->cls->name &&
+                    if (exc && exc->cls && exc->cls->name &&
                         strncmp(exc->cls->name, "java/lang/NoClassDefFoundError", 30) == 0) {
                         char mbuf[128];
                         Object *msg = GET_REF(exc, vm.f_Throwable_message);
@@ -1229,6 +1842,10 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
                             str_to_utf8(msg, mbuf, sizeof mbuf);
                         if (strstr(mbuf, "microedition/m3g") || strstr(mbuf, "microedition.m3g"))
                             nj_log("This MIDlet needs the M3G 3D API (javax.microedition.m3g), "
+                                   "which this build does not provide, so it cannot start. "
+                                   "Exit with the menu.");
+                        else if (strstr(mbuf, "mascotcapsule") || strstr(mbuf, "micro3d"))
+                            nj_log("This MIDlet needs the MascotCapsule v3 3D API (com.mascotcapsule.micro3d.v3), "
                                    "which this build does not provide, so it cannot start. "
                                    "Exit with the menu.");
                     }
@@ -1245,6 +1862,10 @@ static NJ_HOT void interp_run_impl(Thread *t, int budget)
 NJ_HOT void interp_run(Thread *t, int budget)
 {
 #ifdef ESP_PLATFORM
+    if (__builtin_expect(!s_telemetry_enabled, 1)) {
+        interp_run_impl(t, budget);
+        return;
+    }
     uint32_t start_cyc = esp_cpu_get_cycle_count();
     uint64_t native0 = nj_profile_native_cyc;
     /* The method that owns this slice. A slice is 2000 backedges/calls, so a

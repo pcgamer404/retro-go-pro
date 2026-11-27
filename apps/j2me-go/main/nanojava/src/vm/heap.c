@@ -25,6 +25,7 @@
 #define MAX_ROOTS   32
 
 static uint8_t  *heap_start, *heap_end;
+static void     *heap_raw;       /* as returned by pal_heap_alloc() */
 static uint32_t *start_bits;
 static Object   *bins[NBINS + 1];
 static Object   *large;
@@ -40,6 +41,13 @@ static bool      mark_overflow;
 
 static Object  **weak_list;
 static int       weak_count, weak_cap;
+
+#ifdef NJ_GC_STRESS
+/* Host debugging only: force a collection every N allocations so that
+ * conservative root scanning is exercised on every reachable object. */
+int  nj_gc_stress_interval;
+static int gc_stress_left;
+#endif
 
 #define CHUNK_SIZE(o)  ((o)->info & OBJ_INFO_SIZE)
 
@@ -70,10 +78,19 @@ static inline bool bit_test(const void *p)
 void heap_init(size_t size)
 {
     size &= ~(size_t)(GRANULE - 1);
-    heap_start = pal_heap_alloc(size);
-    if (!heap_start)
+    /* The platform allocator only guarantees 4-byte (or even 1-byte)
+     * alignment, but every object must start on a GRANULE boundary: the
+     * start bitmap is indexed by granule and heap_is_object() rejects any
+     * pointer whose low bits are set.  With a misaligned arena, conservative
+     * root scanning would silently find no objects at all and the first GC
+     * would free the entire live set.  Over-allocate and trim the base. */
+    void *raw = pal_heap_alloc(size + GRANULE - 1);
+    if (!raw)
         nj_fatal("cannot allocate a %u byte heap", (unsigned)size);
-    heap_end = heap_start + size;
+    uintptr_t base = ((uintptr_t)raw + (GRANULE - 1)) & ~(uintptr_t)(GRANULE - 1);
+    heap_raw   = raw;
+    heap_start = (uint8_t *)base;
+    heap_end   = heap_start + size;
     start_bits = nj_alloc((size / GRANULE + 31) / 32 * 4);
 
     Object *all = (Object *)heap_start;
@@ -86,14 +103,19 @@ void heap_init(size_t size)
 void heap_shutdown(void)
 {
     /* Free the monitors attached to live objects, then the arena. */
-    for (uint8_t *p = heap_start; p && p < heap_end; p += CHUNK_SIZE((Object *)p)) {
+    for (uint8_t *p = heap_start; p && p < heap_end;) {
         Object *o = (Object *)p;
+        size_t size = CHUNK_SIZE(o);
+        if (size < MIN_CHUNK || (size & (GRANULE - 1)) || p + size > heap_end)
+            break;
         if (o->cls && o->mon)
             monitor_free(o->mon);
+        p += size;
     }
-    pal_heap_free(heap_start);
+    pal_heap_free(heap_raw);
     nj_pal_free(start_bits);
     nj_pal_free(weak_list);
+    heap_raw = NULL;
     heap_start = heap_end = NULL;
     start_bits = NULL;
     weak_list = NULL;
@@ -114,12 +136,15 @@ void heap_add_root(Object **root)
 }
 
 size_t heap_total_bytes(void) { return (size_t)(heap_end - heap_start); }
-size_t heap_free_bytes(void)  { return heap_total_bytes() - used_bytes; }
+size_t heap_free_bytes(void)
+{
+    size_t total = heap_total_bytes();
+    return used_bytes >= total ? 0 : (total - used_bytes);
+}
 
 /* Largest chunk still available, i.e. the biggest single object or array that
- * can still be allocated. Only walked on the OutOfMemoryError path, where the
- * cost does not matter. */
-static size_t heap_largest_free_bytes(void)
+ * can still be allocated. */
+size_t heap_largest_free_bytes(void)
 {
     size_t best = 0;
     for (int i = 0; i <= NBINS; i++) {
@@ -186,38 +211,50 @@ static Object *take(size_t size)
         bins[g] = next_free(o);
         return o;
     }
-    /* First fit in the large list, splitting the remainder. */
+    /* Small request with an empty bin: carve from a bigger small bin first to
+     * recycle small fragments and protect large contiguous blocks from being chipped away. */
+    if (g <= NBINS) {
+        for (size_t b = g + 1; b <= NBINS; b++) {
+            Object *o = bins[b];
+            if (!o)
+                continue;
+            bins[b] = next_free(o);
+            size_t rest = b * GRANULE - size;
+            if (rest >= MIN_CHUNK)
+                free_insert((Object *)((uint8_t *)o + size), rest);
+            else
+                size = b * GRANULE;
+            o->info = (uint32_t)size;
+            return o;
+        }
+    }
+    /* Best fit in the large list, preserving the largest contiguous blocks. */
+    Object *best = NULL, *best_prev = NULL;
     Object *prev = NULL;
+    size_t  best_have = (size_t)-1;
     for (Object *o = large; o; prev = o, o = next_free(o)) {
         size_t have = CHUNK_SIZE(o);
-        if (have < size)
-            continue;
-        if (prev)
-            set_next_free(prev, next_free(o));
-        else
-            large = next_free(o);
-        size_t rest = have - size;
-        if (rest >= MIN_CHUNK) {
-            free_insert((Object *)((uint8_t *)o + size), rest);
-        } else {
-            size = have;
+        if (have >= size && have < best_have) {
+            best = o;
+            best_prev = prev;
+            best_have = have;
+            if (have == size)
+                break;
         }
-        o->info = (uint32_t)size;
-        return o;
     }
-    /* Small request with an empty bin: carve from a bigger small bin. */
-    for (size_t b = g + 1; b <= NBINS; b++) {
-        Object *o = bins[b];
-        if (!o)
-            continue;
-        bins[b] = next_free(o);
-        size_t rest = b * GRANULE - size;
-        if (rest >= MIN_CHUNK)
-            free_insert((Object *)((uint8_t *)o + size), rest);
+    if (best) {
+        if (best_prev)
+            set_next_free(best_prev, next_free(best));
         else
-            size = b * GRANULE;
-        o->info = (uint32_t)size;
-        return o;
+            large = next_free(best);
+        size_t rest = best_have - size;
+        if (rest >= MIN_CHUNK) {
+            free_insert((Object *)((uint8_t *)best + size), rest);
+        } else {
+            size = best_have;
+        }
+        best->info = (uint32_t)size;
+        return best;
     }
     return NULL;
 }
@@ -229,6 +266,12 @@ static Object *alloc_chunk(size_t size)
     size = (size + GRANULE - 1) & ~(size_t)(GRANULE - 1);
     if (size > OBJ_INFO_SIZE)
         return NULL;
+#ifdef NJ_GC_STRESS
+    if (nj_gc_stress_interval > 0 && --gc_stress_left <= 0) {
+        gc_stress_left = nj_gc_stress_interval;
+        heap_gc();
+    }
+#endif
     Object *o = take(size);
     if (!o) {
         heap_gc();
@@ -354,13 +397,17 @@ static void drain(void)
         /* The mark stack overflowed: rescan marked objects to find the
          * children that were dropped. */
         mark_overflow = false;
-        for (uint8_t *p = heap_start; p < heap_end; p += CHUNK_SIZE((Object *)p)) {
+        for (uint8_t *p = heap_start; p < heap_end;) {
             Object *o = (Object *)p;
+            size_t  size = CHUNK_SIZE(o);
+            if (size < MIN_CHUNK || (size & (GRANULE - 1)) || p + size > heap_end)
+                break;
             if (o->cls && is_marked(o)) {
                 scan_children(o);
                 while (mark_sp > 0)
                     scan_children(mark_stack[--mark_sp]);
             }
+            p += size;
         }
     }
 }
@@ -386,18 +433,25 @@ static void mark_thread(Thread *t)
         mark(t->frames[i].lock);
     if (t->depth > 0) {
         Frame *f = &t->frames[t->depth - 1];
-        Slot  *top = f->locals + f->m->max_locals + f->m->max_stack;
+        Slot  *top = f->sp;
         if (top > t->stack_limit)
             top = t->stack_limit;
         scan_range(t->stack, top);
     }
 }
 
+#if defined(__XTENSA__) || defined(ESP_PLATFORM)
+extern void xthal_window_spill(void);
+#endif
+
 #if defined(__GNUC__)
 __attribute__((noinline))
 #endif
 NO_ASAN static void scan_c_stack(void)
 {
+#if defined(__XTENSA__) || defined(ESP_PLATFORM)
+    xthal_window_spill();
+#endif
     jmp_buf regs;
     setjmp(regs);
     scan_range(&regs, (const char *)&regs + sizeof regs);
@@ -422,6 +476,15 @@ static void sweep(void)
     for (uint8_t *p = heap_start; p < heap_end;) {
         Object *o = (Object *)p;
         size_t  size = CHUNK_SIZE(o);
+        if (size < MIN_CHUNK || (size & (GRANULE - 1)) || p + size > heap_end) {
+            nj_log("[heap] ERROR: Corrupted chunk size %u at %p (info=0x%08x)",
+                   (unsigned)size, p, (unsigned)o->info);
+            if (run) {
+                free_insert((Object *)run, (size_t)(p - run));
+                run = NULL;
+            }
+            break;
+        }
         if (o->cls && is_marked(o)) {
             o->info &= ~OBJ_INFO_MARK;
             used_bytes += size;

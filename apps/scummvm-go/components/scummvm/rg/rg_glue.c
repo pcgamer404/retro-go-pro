@@ -316,13 +316,14 @@ bool rgx_game_location(char *dir, int dir_size, char *gameid, int gameid_size)
         }
     }
 
-    // Keep archive files (.zip/.svm/.scummvm) intact so scummvm_run() can
+    // Keep archive files (.zip/.svm/.scm/.scummvm) intact so scummvm_run() can
     // unpack them. Normal files/stubs still resolve to their containing folder.
     struct stat st;
     bool is_dir = (stat(dir, &st) == 0 && S_ISDIR(st.st_mode));
     const char *p = strrchr(dir, '.');
     bool is_archive = p && (strcasecmp(p, ".zip") == 0 ||
-                            strcasecmp(p, ".svm") == 0);
+                            strcasecmp(p, ".svm") == 0 ||
+                            strcasecmp(p, ".scm") == 0);
     if (!is_dir && !is_archive)
     {
         char *slash = strrchr(dir, '/');

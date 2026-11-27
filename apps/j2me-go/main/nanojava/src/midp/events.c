@@ -1,31 +1,35 @@
 /*
- * events.c - input event queue shared by the platform and the Java event
- * thread (nanojava.Events).
+ * events.c - Zero-latency input event queue shared by the platform and the
+ *            Java event thread (nanojava.Events).
  */
 #include "midp.h"
 #include "../vm/vm.h"
+#include <string.h>
 
-#define QUEUE_SIZE 64
+#define QUEUE_SIZE     128
+#define KEY_TABLE_SIZE 512
 
-static NjEvent queue[QUEUE_SIZE];
-static int     head, tail;
-static bool    wakeup;
+static NjEvent  queue[QUEUE_SIZE];
+static int      head, tail;
+static bool     wakeup;
+static uint32_t s_key_down_frame[KEY_TABLE_SIZE];
 
 #if defined(ESP_PLATFORM)
-/* Input latency, read by the telemetry line in the platform layer. */
 uint32_t nj_stat_input_events, nj_stat_input_ms, nj_stat_input_max_ms;
 uint32_t nj_stat_input_dropped;
 #endif
+
+static inline int key_index(int code)
+{
+    if (code >= -255 && code < 0) return -code - 1;
+    if (code >= 0 && code < 256)  return code + 255;
+    return -1;
+}
 
 static bool queue_put(const NjEvent *ev)
 {
     int next = (tail + 1) % QUEUE_SIZE;
     if (next == head) {
-        /* The Java event thread is behind. Keeping the newest events is what a
-         * player feels: a press/release pair delivered seconds late is worse
-         * than losing it, and the loser here is the event they are already past.
-         * (Display.run() drains the queue before painting so this should stay
-         * at zero; the counter is there to prove it.) */
 #if defined(ESP_PLATFORM)
         nj_stat_input_dropped++;
 #endif
@@ -40,8 +44,26 @@ static bool queue_get(NjEvent *ev)
 {
     if (head == tail)
         return false;
-    *ev = queue[head];
+
+    NjEvent *front = &queue[head];
+    int idx = key_index(front->a);
+    uint32_t cur_frame = pal_get_total_frames();
+
+    /* Prevent a same-frame KEY_UP from erasing a tap before the game loop observes
+     * the KEY_DOWN, without ever blocking subsequent events in the FIFO. */
+    if (front->type == EV_KEY_UP && idx >= 0 && idx < KEY_TABLE_SIZE) {
+        if (s_key_down_frame[idx] == cur_frame && ((head + 1) % QUEUE_SIZE) == tail) {
+            return false;
+        }
+        s_key_down_frame[idx] = 0;
+    }
+
+    *ev = *front;
     head = (head + 1) % QUEUE_SIZE;
+
+    if (ev->type == EV_KEY_DOWN && idx >= 0 && idx < KEY_TABLE_SIZE) {
+        s_key_down_frame[idx] = cur_frame;
+    }
     return true;
 }
 
@@ -61,9 +83,6 @@ void midp_poll(void)
         vm_wake_event_waiters();
 }
 
-/* static int next(int[] out, int timeoutMs)
- * Returns the event type (filling out[0..1]) or 0 on timeout/wakeup.
- * timeoutMs < 0 waits forever, 0 polls. */
 static int Events_next(Thread *t, Slot *args, Slot *ret)
 {
     Object *out = args[0].ref;
@@ -77,8 +96,6 @@ static int Events_next(Thread *t, Slot *args, Slot *ret)
     if (queue_get(&ev)) {
         t->native_phase = 0;
 #if defined(ESP_PLATFORM)
-        /* How long this event sat in the queue: the player-facing input lag
-         * (delivery still has to wait for the game's paint). */
         uint32_t waited = (uint32_t)(pal_time_ms() - ev.t_ms);
         nj_stat_input_events++;
         nj_stat_input_ms += waited;
@@ -98,13 +115,18 @@ static int Events_next(Thread *t, Slot *args, Slot *ret)
     }
     t->native_phase = 1;
     t->state = TS_EVENT_WAIT;
-    t->wake_time = timeout > 0 ? pal_time_ms() + timeout : 0;
+    int64_t now = pal_time_ms();
+    if (head != tail) {
+        if (timeout < 0 || timeout > 4)
+            timeout = 4;
+    }
+    t->wake_time = timeout > 0 ? now + timeout : 0;
     return NATIVE_BLOCK;
 }
 
-/* static void wakeup(): makes a pending or future next() return 0. */
 static int Events_wakeup(Thread *t, Slot *args, Slot *ret)
 {
+    (void)t; (void)args; (void)ret;
     wakeup = true;
     vm_wake_event_waiters();
     return NATIVE_OK;
@@ -120,5 +142,6 @@ void midp_events_init(void)
 {
     head = tail = 0;
     wakeup = false;
+    memset(s_key_down_frame, 0, sizeof(s_key_down_frame));
     native_register(event_natives);
 }

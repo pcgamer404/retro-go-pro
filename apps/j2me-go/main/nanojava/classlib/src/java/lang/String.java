@@ -427,4 +427,361 @@ public final class String {
     public static String valueOf(double d) {
         return Double.toString(d);
     }
+
+    public String[] split(String regex) {
+        return split(regex, 0);
+    }
+
+    /**
+     * A small regular-expression splitter. It supports literals, '.', the
+     * escapes \d \D \s \S \w \W, character classes with ranges, and the
+     * quantifiers ? * + {n} {n,} {n,m}. Zero-length matches are skipped so
+     * that the loop always makes progress.
+     */
+    public String[] split(String regex, int limit) {
+        if (regex == null) {
+            throw new NullPointerException();
+        }
+        java.util.Vector parts = new java.util.Vector();
+        int end = offset + count;
+        int maxParts = limit > 0 ? limit : Integer.MAX_VALUE;
+        if (regex.length() == 0) {
+            for (int i = 0; i < count && parts.size() + 1 < maxParts; i++) {
+                parts.addElement(substring(i, i + 1));
+            }
+            if (count == 0 && limit != 0) {
+                parts.addElement("");
+            }
+        } else {
+            RegexNode head = parseRegex(regex);
+            int begin = offset;
+            int search = offset;
+            int[] found = new int[1];
+            while (search <= end && parts.size() + 1 < maxParts) {
+                int matchEnd = findMatch(head, value, search, end, found);
+                if (matchEnd < 0) {
+                    break;
+                }
+                parts.addElement(new String(value, begin, found[0] - begin));
+                begin = matchEnd;
+                search = matchEnd;
+            }
+            parts.addElement(new String(value, begin, end - begin));
+        }
+        if (limit == 0) {
+            while (parts.size() > 0) {
+                String last = (String) parts.elementAt(parts.size() - 1);
+                if (last.count != 0) {
+                    break;
+                }
+                parts.removeElementAt(parts.size() - 1);
+            }
+        }
+        String[] result = new String[parts.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = (String) parts.elementAt(i);
+        }
+        return result;
+    }
+
+    public boolean matches(String regex) {
+        if (regex == null) {
+            throw new NullPointerException();
+        }
+        RegexNode head = parseRegex(regex);
+        int end = offset + count;
+        return matchFrom(head, value, offset, end) == end;
+    }
+
+    private static final class RegexNode {
+        static final int CHAR = 0;
+        static final int ANY = 1;
+        static final int SET = 2;
+
+        int type;
+        char ch;
+        char[] set;
+        boolean negate;
+        int min;
+        int max;
+        RegexNode next;
+    }
+
+    private static RegexNode parseRegex(String regex) {
+        RegexNode head = null;
+        RegexNode tail = null;
+        int i = 0;
+        int n = regex.length();
+        while (i < n) {
+            char c = regex.charAt(i);
+            if (c == '^' || c == '$') {
+                i++;
+                continue;
+            }
+            RegexNode node = new RegexNode();
+            node.min = 1;
+            node.max = 1;
+            if (c == '\\') {
+                i++;
+                if (i >= n) {
+                    node.type = RegexNode.CHAR;
+                    node.ch = '\\';
+                } else {
+                    char e = regex.charAt(i);
+                    if (!setEscape(node, e)) {
+                        node.type = RegexNode.CHAR;
+                        node.ch = escapedChar(e);
+                    }
+                }
+            } else if (c == '[') {
+                i = parseClass(regex, i, node);
+            } else if (c == '.') {
+                node.type = RegexNode.ANY;
+            } else {
+                node.type = RegexNode.CHAR;
+                node.ch = c;
+            }
+            i++;
+            if (i < n) {
+                char q = regex.charAt(i);
+                if (q == '*') {
+                    node.min = 0;
+                    node.max = -1;
+                    i++;
+                } else if (q == '+') {
+                    node.min = 1;
+                    node.max = -1;
+                    i++;
+                } else if (q == '?') {
+                    node.min = 0;
+                    node.max = 1;
+                    i++;
+                } else if (q == '{') {
+                    int close = regex.indexOf('}', i);
+                    if (close > i) {
+                        parseBounds(regex, i + 1, close, node);
+                        i = close + 1;
+                    }
+                }
+            }
+            if (head == null) {
+                head = node;
+            } else {
+                tail.next = node;
+            }
+            tail = node;
+        }
+        return head;
+    }
+
+    private static void parseBounds(String regex, int start, int end,
+            RegexNode node) {
+        int comma = -1;
+        for (int i = start; i < end; i++) {
+            if (regex.charAt(i) == ',') {
+                comma = i;
+                break;
+            }
+        }
+        try {
+            if (comma < 0) {
+                int v = Integer.parseInt(regex.substring(start, end));
+                node.min = v;
+                node.max = v;
+            } else {
+                String lo = regex.substring(start, comma);
+                String hi = regex.substring(comma + 1, end);
+                node.min = lo.length() == 0 ? 0 : Integer.parseInt(lo);
+                node.max = hi.length() == 0 ? -1 : Integer.parseInt(hi);
+            }
+        } catch (NumberFormatException e) {
+            node.min = 1;
+            node.max = 1;
+        }
+    }
+
+    private static int parseClass(String regex, int start, RegexNode node) {
+        node.type = RegexNode.SET;
+        int n = regex.length();
+        int i = start + 1;
+        boolean negate = false;
+        if (i < n && regex.charAt(i) == '^') {
+            negate = true;
+            i++;
+        }
+        StringBuffer set = new StringBuffer();
+        boolean first = true;
+        while (i < n && (regex.charAt(i) != ']' || first)) {
+            first = false;
+            char lo;
+            char c = regex.charAt(i);
+            if (c == '\\' && i + 1 < n) {
+                i++;
+                char e = regex.charAt(i);
+                if (e == 'd') {
+                    appendRange(set, '0', '9');
+                    i++;
+                    continue;
+                }
+                if (e == 's') {
+                    appendWhitespace(set);
+                    i++;
+                    continue;
+                }
+                if (e == 'w') {
+                    appendWord(set);
+                    i++;
+                    continue;
+                }
+                lo = escapedChar(e);
+                i++;
+            } else {
+                lo = c;
+                i++;
+            }
+            if (i + 1 < n && regex.charAt(i) == '-'
+                    && regex.charAt(i + 1) != ']') {
+                i++;
+                char hi = regex.charAt(i);
+                if (hi == '\\' && i + 1 < n) {
+                    i++;
+                    hi = escapedChar(regex.charAt(i));
+                }
+                i++;
+                appendRange(set, lo, hi);
+            } else {
+                set.append(lo);
+            }
+        }
+        node.negate = negate;
+        node.set = set.toString().toCharArray();
+        return i < n ? i : n - 1;
+    }
+
+    private static boolean setEscape(RegexNode node, char e) {
+        if (e == 'd' || e == 'D') {
+            node.type = RegexNode.SET;
+            node.set = range('0', '9');
+            node.negate = e == 'D';
+            return true;
+        }
+        if (e == 's' || e == 'S') {
+            node.type = RegexNode.SET;
+            StringBuffer b = new StringBuffer();
+            appendWhitespace(b);
+            node.set = b.toString().toCharArray();
+            node.negate = e == 'S';
+            return true;
+        }
+        if (e == 'w' || e == 'W') {
+            node.type = RegexNode.SET;
+            StringBuffer b = new StringBuffer();
+            appendWord(b);
+            node.set = b.toString().toCharArray();
+            node.negate = e == 'W';
+            return true;
+        }
+        return false;
+    }
+
+    private static char escapedChar(char c) {
+        if (c == 'n') {
+            return '\n';
+        }
+        if (c == 'r') {
+            return '\r';
+        }
+        if (c == 't') {
+            return '\t';
+        }
+        if (c == 'f') {
+            return '\f';
+        }
+        return c;
+    }
+
+    private static char[] range(char lo, char hi) {
+        char[] set = new char[hi - lo + 1];
+        for (int i = 0; i < set.length; i++) {
+            set[i] = (char) (lo + i);
+        }
+        return set;
+    }
+
+    private static void appendRange(StringBuffer set, char lo, char hi) {
+        for (int c = lo; c <= hi; c++) {
+            set.append((char) c);
+        }
+    }
+
+    private static void appendWhitespace(StringBuffer set) {
+        set.append(' ');
+        set.append('\t');
+        set.append('\n');
+        set.append('\r');
+        set.append('\f');
+    }
+
+    private static void appendWord(StringBuffer set) {
+        appendRange(set, 'a', 'z');
+        appendRange(set, 'A', 'Z');
+        appendRange(set, '0', '9');
+        set.append('_');
+    }
+
+    private static int findMatch(RegexNode head, char[] text, int from,
+            int end, int[] start) {
+        for (int j = from; j <= end; j++) {
+            int e = matchFrom(head, text, j, end);
+            if (e > j) {
+                start[0] = j;
+                return e;
+            }
+        }
+        start[0] = -1;
+        return -1;
+    }
+
+    private static int matchFrom(RegexNode node, char[] text, int pos,
+            int end) {
+        if (node == null) {
+            return pos;
+        }
+        int count = 0;
+        int limit = node.max < 0 ? end - pos : node.max;
+        int p = pos;
+        while (count < limit && p < end && nodeMatches(node, text[p])) {
+            p++;
+            count++;
+        }
+        while (count >= node.min) {
+            int r = matchFrom(node.next, text, pos + count, end);
+            if (r >= 0) {
+                return r;
+            }
+            count--;
+        }
+        return -1;
+    }
+
+    private static boolean nodeMatches(RegexNode node, char c) {
+        if (node.type == RegexNode.CHAR) {
+            return c == node.ch;
+        }
+        if (node.type == RegexNode.ANY) {
+            return true;
+        }
+        if (node.type == RegexNode.SET) {
+            boolean in = false;
+            char[] set = node.set;
+            for (int i = 0; i < set.length; i++) {
+                if (set[i] == c) {
+                    in = true;
+                    break;
+                }
+            }
+            return node.negate ? !in : in;
+        }
+        return false;
+    }
 }

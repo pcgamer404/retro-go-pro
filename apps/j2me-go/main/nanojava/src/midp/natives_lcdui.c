@@ -10,6 +10,7 @@
 #include "midp.h"
 #include "gfx.h"
 #include "../vm/vm.h"
+#include "../util/bmp.h"
 #include "../util/png.h"
 
 #include <stdlib.h>
@@ -62,6 +63,13 @@ static void image_surface(Object *img, Surface *s)
 {
     Object *px = GET_REF(img, F.img_pixels);
     Object *al = GET_REF(img, F.img_alpha);
+    if (!px) {
+        s->px = NULL;
+        s->alpha = NULL;
+        s->w = 0;
+        s->h = 0;
+        return;
+    }
     s->px = ARRAY_DATA(px, uint16_t);
     s->alpha = al ? ARRAY_DATA(al, uint8_t) : NULL;
     s->w = GET_INT(img, F.img_width);
@@ -172,6 +180,10 @@ static int G_drawString0(Thread *t, Slot *args, Slot *ret)
 {
     G_BEGIN();
     Object *s = args[1].ref;
+    if (!s) {
+        NPE(t);
+        return NATIVE_OK;
+    }
     int     size, style;
     font_of(args[0].ref, &size, &style);
     font_draw(&x.s, &x.c, size, style, str_chars(s) + A(2), A(3), A(4) + x.tx, A(5) + x.ty, x.color);
@@ -183,6 +195,10 @@ static int G_drawChars0(Thread *t, Slot *args, Slot *ret)
 {
     G_BEGIN();
     Object *c = args[1].ref;
+    if (!c) {
+        NPE(t);
+        return NATIVE_OK;
+    }
     int     size, style;
     font_of(args[0].ref, &size, &style);
     font_draw(&x.s, &x.c, size, style, ARRAY_DATA(c, uint16_t) + A(2), A(3), A(4) + x.tx,
@@ -195,6 +211,10 @@ static int G_drawChars0(Thread *t, Slot *args, Slot *ret)
 static int G_drawRegion0(Thread *t, Slot *args, Slot *ret)
 {
     G_BEGIN();
+    if (!args[1].ref) {
+        NPE(t);
+        return NATIVE_OK;
+    }
     Surface src;
     image_surface(args[1].ref, &src);
     int sx = A(2), sy = A(3), w = A(4), h = A(5);
@@ -250,6 +270,10 @@ static int G_drawRGB0(Thread *t, Slot *args, Slot *ret)
 static bool alloc_pixels(Thread *t, Object *img, int w, int h, bool alpha)
 {
     init_fields();
+    if (w <= 0 || h <= 0 || (int64_t)w * h > 0x3fffffff) {
+        vm_throw_new(t, "java/lang/OutOfMemoryError", "image dimensions too large");
+        return false;
+    }
     Array *px = vm_new_prim_array(t, 'S', w * h);
     if (!px)
         return false;
@@ -302,20 +326,41 @@ static int Image_decode(Thread *t, Slot *args, Slot *ret)
         return NATIVE_OK;
     }
     const uint8_t *bytes = ARRAY_DATA(data, uint8_t) + off;
-    PngInfo        info;
-    if (!png_info(bytes, (uint32_t)len, &info))
+    PngInfo info;
+    BmpInfo binfo;
+    int     width, height;
+    bool    has_alpha, is_png;
+    if (png_is_png(bytes, (uint32_t)len)) {
+        if (!png_info(bytes, (uint32_t)len, &info))
+            return NATIVE_OK;
+        width = info.width;
+        height = info.height;
+        has_alpha = info.has_alpha;
+        is_png = true;
+    } else if (bmp_is_bmp(bytes, (uint32_t)len)) {
+        if (!bmp_info(bytes, (uint32_t)len, &binfo))
+            return NATIVE_OK;
+        width = binfo.width;
+        height = binfo.height;
+        has_alpha = binfo.has_alpha;
+        is_png = false;
+    } else {
         return NATIVE_OK;
-    if (!alloc_pixels(t, img, info.width, info.height, info.has_alpha))
+    }
+    if (!alloc_pixels(t, img, width, height, has_alpha))
         return NATIVE_OK;
     DecodeCtx d;
     d.px = ARRAY_DATA(GET_REF(img, F.img_pixels), uint16_t);
-    d.alpha = info.has_alpha ? ARRAY_DATA(GET_REF(img, F.img_alpha), uint8_t) : NULL;
-    d.w = info.width;
+    d.alpha = has_alpha ? ARRAY_DATA(GET_REF(img, F.img_alpha), uint8_t) : NULL;
+    d.w = width;
     d.translucent = false;
-    if (!png_decode(bytes, (uint32_t)len, png_row, &d))
+    bool ok = is_png
+                  ? png_decode(bytes, (uint32_t)len, png_row, &d)
+                  : bmp_decode(bytes, (uint32_t)len, png_row, &d);
+    if (!ok)
         return NATIVE_OK;
-    if (info.has_alpha && !d.translucent)
-        SET_REF(img, F.img_alpha, NULL);   /* tRNS present but unused */
+    if (has_alpha && !d.translucent)
+        SET_REF(img, F.img_alpha, NULL);   /* alpha present but unused */
     ret->i = 1;
     return NATIVE_OK;
 }
@@ -339,10 +384,17 @@ static int Image_initRGB(Thread *t, Slot *args, Slot *ret)
     uint16_t      *px = ARRAY_DATA(GET_REF(img, F.img_pixels), uint16_t);
     uint8_t       *al = alpha ? ARRAY_DATA(GET_REF(img, F.img_alpha), uint8_t) : NULL;
     const int32_t *src = ARRAY_DATA(rgb, int32_t);
-    for (int i = 0; i < w * h; i++) {
-        px[i] = gfx_pack((uint32_t)src[i]);
-        if (al)
-            al[i] = (uint8_t)((uint32_t)src[i] >> 24);
+    int total = w * h;
+    if (al) {
+        for (int i = 0; i < total; i++) {
+            uint32_t c = (uint32_t)src[i];
+            px[i] = gfx_pack(c);
+            al[i] = (uint8_t)(c >> 24);
+        }
+    } else {
+        for (int i = 0; i < total; i++) {
+            px[i] = gfx_pack((uint32_t)src[i]);
+        }
     }
     return NATIVE_OK;
 }
@@ -366,7 +418,17 @@ static int Image_initRegion(Thread *t, Slot *args, Slot *ret)
     Object *dst = args[0].ref, *srcimg = args[1].ref;
     int     x = A(2), y = A(3), w = A(4), h = A(5), tr = A(6);
     init_fields();
+    if (!srcimg) {
+        NPE(t);
+        return NATIVE_OK;
+    }
     bool    has_alpha = GET_REF(srcimg, F.img_alpha) != NULL;
+    int     sw = GET_INT(srcimg, F.img_width);
+    int     sh = GET_INT(srcimg, F.img_height);
+    if (x < 0 || y < 0 || w <= 0 || h <= 0 || x > sw - w || y > sh - h) {
+        vm_throw_new(t, "java/lang/IllegalArgumentException", "region exceeds image bounds");
+        return NATIVE_OK;
+    }
     int     dw = tr >= 4 ? h : w, dh = tr >= 4 ? w : h;
     if (!alloc_pixels(t, dst, dw, dh, has_alpha))
         return NATIVE_OK;
@@ -379,21 +441,10 @@ static int Image_initRegion(Thread *t, Slot *args, Slot *ret)
     opaque.alpha = NULL;
     gfx_blit(&out, &all, &opaque, x, y, w, h, tr, 0, 0);
     if (has_alpha) {
-        /* Transform the alpha plane by blitting it as a fake surface of
-         * 16-bit values. */
-        uint16_t *a16 = nj_pal_malloc(sizeof(uint16_t) * (size_t)src.w * src.h);
-        uint16_t *o16 = nj_pal_malloc(sizeof(uint16_t) * (size_t)dw * dh);
-        if (a16 && o16) {
-            for (int i = 0; i < src.w * src.h; i++)
-                a16[i] = src.alpha[i];
-            Surface as = {a16, NULL, src.w, src.h}, ao = {o16, NULL, dw, dh};
-            gfx_blit(&ao, &all, &as, x, y, w, h, tr, 0, 0);
-            uint8_t *al = ARRAY_DATA(GET_REF(dst, F.img_alpha), uint8_t);
-            for (int i = 0; i < dw * dh; i++)
-                al[i] = (uint8_t)o16[i];
-        }
-        nj_pal_free(a16);
-        nj_pal_free(o16);
+        /* Move the alpha plane through the same transform. This used to
+         * allocate two temporary surfaces; a rotated sprite extraction could
+         * therefore need three times the sprite size in one go. */
+        gfx_blit_alpha(&out, &all, &src, x, y, w, h, tr, 0, 0);
     }
     return NATIVE_OK;
 }
@@ -449,6 +500,10 @@ static int Font_charWidth0(Thread *t, Slot *args, Slot *ret)
 static int Font_stringWidth0(Thread *t, Slot *args, Slot *ret)
 {
     Object *s = args[2].ref;
+    if (!s) {
+        NPE(t);
+        return NATIVE_OK;
+    }
     ret->i = font_chars_width(A(0), A(1), str_chars(s) + A(3), A(4));
     return NATIVE_OK;
 }
@@ -456,6 +511,10 @@ static int Font_stringWidth0(Thread *t, Slot *args, Slot *ret)
 static int Font_charsWidth0(Thread *t, Slot *args, Slot *ret)
 {
     Object *c = args[2].ref;
+    if (!c) {
+        NPE(t);
+        return NATIVE_OK;
+    }
     ret->i = font_chars_width(A(0), A(1), ARRAY_DATA(c, uint16_t) + A(3), A(4));
     return NATIVE_OK;
 }

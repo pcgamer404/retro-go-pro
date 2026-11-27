@@ -175,25 +175,46 @@ static void key_event(uint32_t bit, int key, uint32_t buttons)
         Quake2_SendKey(key, is_down);
 }
 
+// releases every key Quake could still think is held, before a menu takes over
+static void release_game_keys(void)
+{
+    key_event(RG_KEY_UP, K_UPARROW, 0);
+    key_event(RG_KEY_DOWN, K_DOWNARROW, 0);
+    key_event(RG_KEY_LEFT, K_LEFTARROW, 0);
+    key_event(RG_KEY_RIGHT, K_RIGHTARROW, 0);
+    key_event(RG_KEY_A, K_MOUSE1, 0);
+    key_event(RG_KEY_B, K_SPACE, 0);
+    key_event(RG_KEY_X, 'c', 0);
+    key_event(RG_KEY_SELECT, K_TAB, 0);
+    key_event(RG_KEY_START, K_ESCAPE, 0);
+}
+
 static void poll_input(void)
 {
+    static bool option_was_down;
     uint32_t buttons = rg_input_read_gamepad();
     bool menu_down = (buttons & RG_KEY_MENU) != 0;
+    bool option_down = (buttons & RG_KEY_OPTION) != 0;
     int64_t now = rg_system_timer();
+    // USB earphone middle button (long press) sends OPTION: open the Retro-Go
+    // menu at once, no hold needed, like the Select+Start hold below.
+    if (option_down && !option_was_down) {
+        release_game_keys();
+        previous_buttons = buttons;
+        menu_opened = true;
+        rg_gui_game_menu();
+        menu_was_down = (rg_input_read_gamepad() & RG_KEY_MENU) != 0;
+        previous_buttons = rg_input_read_gamepad();
+        option_was_down = true;
+        return;
+    }
+    option_was_down = option_down;
     if (menu_down && !menu_was_down) {
         menu_pressed_at = now;
         menu_opened = false;
     }
     if (menu_down && !menu_opened && now - menu_pressed_at >= 500000) {
-        key_event(RG_KEY_UP, K_UPARROW, 0);
-        key_event(RG_KEY_DOWN, K_DOWNARROW, 0);
-        key_event(RG_KEY_LEFT, K_LEFTARROW, 0);
-        key_event(RG_KEY_RIGHT, K_RIGHTARROW, 0);
-        key_event(RG_KEY_A, K_MOUSE1, 0);
-        key_event(RG_KEY_B, K_SPACE, 0);
-        key_event(RG_KEY_X, 'c', 0);
-        key_event(RG_KEY_SELECT, K_TAB, 0);
-        key_event(RG_KEY_START, K_ESCAPE, 0);
+        release_game_keys();
         previous_buttons = buttons;
         menu_opened = true;
         rg_gui_game_menu();

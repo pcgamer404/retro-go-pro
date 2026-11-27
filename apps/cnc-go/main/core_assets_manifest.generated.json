@@ -1,0 +1,18 @@
+{
+  "schema": 2,
+  "id": "cnc-go",
+  "title": "Command & Conquer",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "cnc",
+    "ini",
+    "mix"
+  ],
+  "rom_folder": "cnc",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

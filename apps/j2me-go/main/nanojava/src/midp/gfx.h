@@ -55,6 +55,21 @@ static inline uint16_t gfx_blend(uint16_t dst, uint16_t src, unsigned a)
     return (uint16_t)(0x8000 | r | (g << 5) | (b << 10));
 }
 
+static inline uint16_t gfx_blend_argb(uint16_t dst, uint32_t argb, unsigned a)
+{
+    unsigned ia = 255 - a;
+    unsigned sr = (argb >> 19) & 31;
+    unsigned sg = (argb >> 11) & 31;
+    unsigned sb = (argb >> 3) & 31;
+    unsigned vr = sr * a + (dst & 31) * ia;
+    unsigned vg = sg * a + ((dst >> 5) & 31) * ia;
+    unsigned vb = sb * a + ((dst >> 10) & 31) * ia;
+    unsigned r = (vr + 1 + (vr >> 8)) >> 8;
+    unsigned g = (vg + 1 + (vg >> 8)) >> 8;
+    unsigned b = (vb + 1 + (vb >> 8)) >> 8;
+    return (uint16_t)(0x8000 | r | (g << 5) | (b << 10));
+}
+
 /* Sprite / drawRegion transforms (javax.microedition.lcdui.game.Sprite). */
 enum {
     TRANS_NONE = 0, TRANS_MIRROR_ROT180 = 1, TRANS_MIRROR = 2, TRANS_ROT180 = 3,
@@ -75,6 +90,12 @@ void gfx_round_rect(Surface *s, const Clip *c, int x, int y, int w, int h, int a
  * alpha. src may be dst (copyArea), in which case overlap is handled. */
 void gfx_blit(Surface *dst, const Clip *c, const Surface *src, int sx, int sy, int w, int h,
               int transform, int dx, int dy);
+
+/* Same transform as gfx_blit, but copies the alpha planes instead of the
+ * colour planes. Used when Image.createImage(Image, ...) rotates a sprite:
+ * it avoids allocating temporary full-size surfaces just to move alpha. */
+void gfx_blit_alpha(Surface *dst, const Clip *c, const Surface *src, int sx, int sy,
+                    int w, int h, int transform, int dx, int dy);
 
 /* Draws ARGB pixels (MIDP drawRGB). */
 void gfx_draw_rgb(Surface *dst, const Clip *c, const int32_t *rgb, int offset, int scan,

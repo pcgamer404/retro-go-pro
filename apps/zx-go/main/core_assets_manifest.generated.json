@@ -1,0 +1,20 @@
+{
+  "schema": 2,
+  "id": "zx-go",
+  "title": "Sinclair ZX Spectrum",
+  "version": "",
+  "launch_mode": "rom",
+  "rom_extensions": [
+    "sna",
+    "tap",
+    "tzx",
+    "z80",
+    "zip"
+  ],
+  "rom_folder": "spectrum",
+  "art": [
+    "background.png",
+    "logo.png",
+    "banner.png"
+  ]
+}

@@ -1,0 +1,51 @@
+# SOTN for Retro-Go (sotn-go) - ESP32-S3 with 8 MB octal PSRAM.
+#
+# Only the options the game port depends on. Flash size, flash/PSRAM speed, CPU
+# frequency, console and the partition table are NOT set here: they belong to
+# your retro-go target / rg_tool.py and stay as they are.
+#
+# IDF ignores *.defaults once an sdkconfig exists: after editing this file,
+# delete the app's build dir / generated sdkconfig.
+
+# ~4.6 MB of game statics are placed in PSRAM with EXT_RAM_BSS_ATTR. Without
+# this the attribute is a no-op and the link fails with a DRAM overflow.
+# Pin flash + partition table so a regenerated sdkconfig never falls back to
+# the 1 MB single-app "factory" table. partitions.csv is the one rg_tool writes
+# in the retro-go root (sotn-go = 3 MB).
+# SOTN performance test: force ESP32-S3 to 240 MHz.
+# A clean/generated sdkconfig is required after changing these defaults.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+# CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160 is not set
+# CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80 is not set
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="../partitions.csv"
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+
+# Cache layout that is safe with octal PSRAM (64B wrap bursts); what the
+# standalone SOTN port was tuned with.
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_8WAYS=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_8WAYS=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
+# stage loads keep the game task busy for seconds
+CONFIG_ESP_TASK_WDT_INIT=n
+CONFIG_FREERTOS_HZ=1000
+CONFIG_COMPILER_CXX_EXCEPTIONS=n
+
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE=y
+# CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE is not set

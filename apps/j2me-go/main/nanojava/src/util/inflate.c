@@ -8,6 +8,10 @@
 
 #include <string.h>
 
+#ifdef ESP_PLATFORM
+#include "miniz.h"
+#endif
+
 #define MAXBITS  15
 #define MAXLCODE 286
 #define MAXDCODE 30
@@ -43,19 +47,33 @@ static inline int bits(State *s, int need)
 
 static int decode(State *s, const Huff *h)
 {
+    /* Pull up to 32 bits in one go instead of calling bits(s, 1) for every
+     * level of the tree.  The loop below then only shifts a register, which
+     * matters because inflating IDAT data is the bulk of a loading screen. */
+    uint32_t val = s->bitbuf;
+    int      cnt = s->bitcnt;
+    while (cnt <= 24 && s->src < s->src_end) {
+        val |= (uint32_t)*s->src++ << cnt;
+        cnt += 8;
+    }
+    int maxlen = cnt < MAXBITS ? cnt : MAXBITS;
     int code = 0, first = 0, index = 0;
-    for (int len = 1; len <= MAXBITS; len++) {
-        code |= bits(s, 1);
+    for (int len = 1; len <= maxlen; len++) {
+        code |= (int)((val >> (len - 1)) & 1u);
         int count = h->count[len];
-        if (code - count < first)
+        if (code - count < first) {
+            s->bitbuf = val >> len;
+            s->bitcnt = cnt - len;
             return h->symbol[index + (code - first)];
+        }
         index += count;
         first += count;
         first <<= 1;
         code <<= 1;
-        if (s->err)
-            return -1;
     }
+    s->bitbuf = 0;
+    s->bitcnt = 0;
+    s->err = 1;
     return -1;
 }
 
@@ -86,6 +104,12 @@ static int build(Huff *h, const uint8_t *length, int n)
 
 static int stored(State *s)
 {
+    /* decode() prefetches whole bytes into bitbuf. Only the bits left in the
+     * current byte are padding; every complete byte still buffered belongs to
+     * the stored block header/data and must be handed back to the input, or a
+     * stored block that follows a Huffman block is read from the wrong
+     * position (corrupt resource -> loader never gets its asset). */
+    s->src -= s->bitcnt >> 3;
     s->bitbuf = 0;
     s->bitcnt = 0;
     if (s->src_end - s->src < 4)
@@ -232,6 +256,11 @@ static int dynamic(State *s)
 int32_t nj_inflate(uint8_t *dst, uint32_t dst_len,
                    const uint8_t *src, uint32_t src_len)
 {
+#ifdef ESP_PLATFORM
+    size_t out_len = tinfl_decompress_mem_to_mem(dst, dst_len, src, src_len, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    if (out_len != TINFL_DECOMPRESS_MEM_TO_MEM_FAILED)
+        return (int32_t)out_len;
+#endif
     State s;
     s.src = src;
     s.src_end = src + src_len;
@@ -263,6 +292,11 @@ int32_t nj_inflate(uint8_t *dst, uint32_t dst_len,
 int32_t nj_zlib_inflate(uint8_t *dst, uint32_t dst_len,
                         const uint8_t *src, uint32_t src_len)
 {
+#ifdef ESP_PLATFORM
+    size_t out_len = tinfl_decompress_mem_to_mem(dst, dst_len, src, src_len, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    if (out_len != TINFL_DECOMPRESS_MEM_TO_MEM_FAILED)
+        return (int32_t)out_len;
+#endif
     if (src_len < 2 || (src[0] & 0x0f) != 8 ||
         ((src[0] << 8) | src[1]) % 31 != 0 || (src[1] & 0x20))
         return -1;

@@ -108,12 +108,14 @@ static int pico8_flr(lua_State *l) {
 }
 
 static int pico8_cos(lua_State *l) {
-    lua_pushnumber(l, cast_num(cosf(-TAU * lua_tonumber(l, 1))));
+    lua_pushnumber(l, z8::fix32::cos(lua_tonumber(l, 1)));
     return 1;
 }
 
 static int pico8_sin(lua_State *l) {
-    lua_pushnumber(l, cast_num(z8::fix32::sin(-TAU * lua_tonumber(l, 1))));
+    // fix32::sin() takes PICO-8 turns, not radians; the previous
+    // `sin(-TAU * x)` scaled the argument by 2*pi and inverted it.
+    lua_pushnumber(l, z8::fix32::sin(lua_tonumber(l, 1)));
     return 1;
 }
 
@@ -333,15 +335,18 @@ static const luaL_RegX fast_pico8lib[] = {
   //{"max",   (void*)pico8_max,	FCF_MAX,    },
   //{"min",   (void*)pico8_min,	FCF_MIN,    },
   //{"mid",   (void*)pico8_mid,	FCF_MID,    },
-  //{"atan2", (void*)pico8_atan2, FCF_ATAN2	},
-  //{"band",  (void*)pico8_band,	FCF_BAND,   },
-  //{"bor",   (void*)pico8_bor,	FCF_BOR,    },
-  //{"bxor",  (void*)pico8_bxor,	FCF_BXOR,   },
-  //{"shl",   (void*)pico8_shl,	FCF_SHL,    },
+  // max/min/mid stay on the C path on purpose: PICO-8 returns the selected
+  // *argument*, so their result type depends on the inputs (and max(nil, x)
+  // has special meaning), which a numeric fast-call cannot reproduce.
+  {"atan2", (void*)pico8_atan2, FCF_ATAN2	},
+  {"band",  (void*)pico8_band,	FCF_BAND,   },
+  {"bor",   (void*)pico8_bor,	FCF_BOR,    },
+  {"bxor",  (void*)pico8_bxor,	FCF_BXOR,   },
+  {"shl",   (void*)pico8_shl,	FCF_SHL,    },
   {"shr",   (void*)pico8_shr,	FCF_SHR,    },
-  //{"lshr",  (void*)pico8_lshr,	FCF_LSHR,   },
-  //{"rotl",  (void*)pico8_rotl,	FCF_ROTL,   },
-  //{"rotr",  (void*)pico8_rotr,	FCF_ROTR,   },
+  {"lshr",  (void*)pico8_lshr,	FCF_LSHR,   },
+  {"rotl",  (void*)pico8_rotl,	FCF_ROTL,   },
+  {"rotr",  (void*)pico8_rotr,	FCF_ROTR,   },
   // Sentinel: luaL_RegX has 3 fields (name, func, tag); the third (tag) is
   // 0 here so the sentinel isn't a valid fast-call flag and lookups stop.
   {NULL, NULL, 0}
