@@ -77,7 +77,18 @@ int SDL_SetPaletteColors(SDL_Palette *palette, const SDL_Color *colors, int firs
 int SDL_SetSurfacePalette(SDL_Surface *surface, SDL_Palette *palette)
 {
     if (!surface || !surface->format) return -1;
-    surface->format->palette = palette;
+    if (!palette) return 0;
+    if (!surface->format->palette) {
+        surface->format->palette = SDL_AllocPalette(palette->ncolors);
+        if (!surface->format->palette) return -1;
+    }
+    int count = palette->ncolors;
+    if (count > surface->format->palette->ncolors) {
+        count = surface->format->palette->ncolors;
+    }
+    if (palette->colors && surface->format->palette->colors && count > 0) {
+        memcpy(surface->format->palette->colors, palette->colors, count * sizeof(SDL_Color));
+    }
     return 0;
 }
 
@@ -106,9 +117,7 @@ void SDL_SetCursor(SDL_Cursor *cursor) {}
 void SDL_FreeCursor(SDL_Cursor *cursor) {}
 SDL_Cursor* SDL_GetCursor(void) { return &s_dummy_cursor; }
 
-void SDL_PumpEvents(void) {}
 void SDL_FlushEvents(Uint32 minType, Uint32 maxType) {}
-Uint32 SDL_GetRelativeMouseState(int *x, int *y) { if (x) *x = 0; if (y) *y = 0; return 0; }
 int SDL_SetRelativeMouseMode(int enabled) { return 0; }
 
 // Audio Device & Mixing

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-set(COMPONENTS "main retro-go fallout_common fallout1 fallout2")
+set(COMPONENTS "main retro-go fallout_common fallout1")
 set(RG_ENABLE_NETWORKING 0)
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../base.cmake")
     include("${CMAKE_CURRENT_LIST_DIR}/../base.cmake")

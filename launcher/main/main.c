@@ -426,7 +426,7 @@ static void options_handler(rg_gui_option_t *dest)
 
 static void about_handler(rg_gui_option_t *dest)
 {
-    *dest++ = (rg_gui_option_t){0, _("Core manager"), NULL, RG_DIALOG_FLAG_NORMAL, &core_manager_cb};
+    *dest++ = (rg_gui_option_t){0, _("App manager"), NULL, RG_DIALOG_FLAG_NORMAL, &core_manager_cb};
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 

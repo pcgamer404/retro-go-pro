@@ -39,6 +39,11 @@ void SDL_RG_SetSurface(rg_surface_t *surf)
     rg_screen = surf;
 }
 
+void *SDL_RG_GetSurfaceBuffer(void)
+{
+    return rg_screen ? rg_screen->data : NULL;
+}
+
 void SDL_RG_ResetTiming(void)
 {
     last_frame_time = rg_system_timer();
@@ -146,7 +151,7 @@ static SDL_Surface *create_rgb_surface(Uint32 flags, int width, int height, int 
     surface->w = width;
     surface->h = height;
     surface->pitch = (Uint16)(width * surface->format->BytesPerPixel);
-    surface->pixels = pixels ? pixels : malloc(surface->pitch * height);
+    surface->pixels = pixels ? pixels : calloc(1, (size_t)surface->pitch * height);
     if (!surface->pixels) {
         free(surface->format);
         free(surface);
@@ -422,6 +427,10 @@ int SDL_Flip(SDL_Surface *screen)
     }
     
     rg_display_submit(rg_screen, 0);
+
+    if (surface_uses_rg_buffer(screen)) {
+        frame_wait_us += wait_for_display();
+    }
 
     last_frame_time = rg_system_timer();
     frame_wait_us = 0;

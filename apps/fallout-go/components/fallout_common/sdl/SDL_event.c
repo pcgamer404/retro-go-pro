@@ -10,6 +10,8 @@ Uint8 SDL_EventState(Uint32 type, int state)
 }
 
 extern int SDL_RG_PollEvent(SDL_Event *event);
+extern Uint32 SDL_RG_GetMouseState(int *x, int *y);
+extern Uint32 SDL_RG_GetRelativeMouseState(int *x, int *y);
 
 #define EVENT_QUEUE_SIZE 64
 static SDL_Event s_event_queue[EVENT_QUEUE_SIZE];
@@ -48,11 +50,24 @@ int SDL_WaitEvent(SDL_Event *event)
     return 1;
 }
 
+void SDL_PumpEvents(void)
+{
+    SDL_Event ev;
+    while (SDL_RG_PollEvent(&ev)) {
+        if (SDL_PushEvent(&ev) != 0) {
+            break;
+        }
+    }
+}
+
 Uint32 SDL_GetMouseState(int *x, int *y)
 {
-    if (x) *x = 0;
-    if (y) *y = 0;
-    return 0;
+    return SDL_RG_GetMouseState(x, y);
+}
+
+Uint32 SDL_GetRelativeMouseState(int *x, int *y)
+{
+    return SDL_RG_GetRelativeMouseState(x, y);
 }
 
 int SDL_ShowCursor(int toggle)

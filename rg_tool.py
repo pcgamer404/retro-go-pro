@@ -25,10 +25,10 @@ PROJECT_APPS = {
   'launcher':       [0, 16, 1310720],
 }
 
-# Core applications live under apps/ and are installed dynamically through the pool.
-# Their .bin images are staged in cores/ for copying to the console's SD card.
+# Pool applications live under apps/ and are installed dynamically through the pool.
+# Their .bin images are staged in apps_bin/ for copying to the console's SD card.
 CORE_SOURCE_ROOT = "apps"
-CORE_OUTPUT_ROOT = "cores"
+CORE_OUTPUT_ROOT = "apps_bin"
 CORE_PROJECTS = sorted({
     os.path.basename(os.path.dirname(t))
     for t in glob.glob(os.path.join(CORE_SOURCE_ROOT, "*", "CMakeLists.txt"))
@@ -46,7 +46,7 @@ def core_project_path(app):
 # the table: cores like mk64-go locate their asset store through
 # esp_ota_get_running_partition(), which only looks at APP partitions. The
 # bootloader ignores non-OTA app subtypes, so app_count stays 1.
-CORE_POOL_LABEL = "cores"
+CORE_POOL_LABEL = "apps"
 CORE_POOL_TYPE = 0             # app
 CORE_POOL_SUBTYPE = 0x30       # custom app subtype, not an OTA slot
 FLASH_SIZE = 0x1000000         # 16 MB, matches the device
@@ -235,7 +235,7 @@ def build_core_app(app, device_type, no_networking=False):
     temporary_bin = output_bin + ".tmp"
     shutil.copy2(built_bin, temporary_bin)
     os.replace(temporary_bin, output_bin)
-    print(f"Staged core image: {output_bin}")
+    print(f"Staged app image: {output_bin}")
 
 
 def flash_app(app, port, baudrate=1152000):
@@ -273,7 +273,7 @@ def monitor_app(app, port, baudrate=115200):
 parser = argparse.ArgumentParser(description="Retro-Go build tool")
 parser.add_argument(
 # To do: Learn to use subcommands instead...
-    "command", choices=["build-fw", "build-img", "release", "build", "build-core", "clean", "flash", "monitor", "run", "profile", "install"],
+    "command", choices=["build-fw", "build-img", "release", "build", "build-app", "build-core", "clean", "flash", "monitor", "run", "profile", "install"],
 )
 parser.add_argument(
     "apps", nargs="*", default="all", choices=["all"] + list(PROJECT_APPS.keys()) + CORE_PROJECTS
@@ -308,12 +308,12 @@ if os.path.exists(f"components/retro-go/targets/{args.target}/sdkconfig"):
 os.putenv("IDF_TARGET", IDF_TARGET)
 
 command = args.command
-if command == "build-core":
+if command in ["build-app", "build-core"]:
     if isinstance(args.apps, str) or not args.apps or args.apps == ["all"]:
-        exit("build-core requires one or more core project names")
+        exit(f"{command} requires one or more app project names")
     unknown = sorted(set(args.apps) - set(CORE_PROJECTS))
     if unknown:
-        exit("Unknown core project(s): " + ", ".join(unknown))
+        exit("Unknown app project(s): " + ", ".join(unknown))
     apps = list(dict.fromkeys(args.apps))
 else:
     requested_apps = (DEFAULT_APPS.split() if isinstance(args.apps, str) or "all" in args.apps
@@ -332,10 +332,10 @@ try:
         for app in apps:
             clean_app(app)
 
-    if command in ["build", "build-fw", "build-img", "release", "run", "profile", "install", "build-core"]:
+    if command in ["build", "build-fw", "build-img", "release", "run", "profile", "install", "build-app", "build-core"]:
         print("=== Step: Building ===\n")
         for app in apps:
-            if command == "build-core":
+            if command in ["build-app", "build-core"]:
                 build_core_app(app, args.target, args.no_networking)
             else:
                 build_app(app, args.target, command == "profile", args.no_networking, command == "release")

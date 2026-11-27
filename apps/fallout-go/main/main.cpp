@@ -68,15 +68,16 @@ void compat_set_base_path(const char* basePath);
 // Virtual mouse state (640x480 coordinate space)
 static int g_cursor_x = 320;
 static int g_cursor_y = 240;
+static int g_rel_dx = 0;
+static int g_rel_dy = 0;
+static Uint32 g_mouse_buttons = 0;
 static int64_t g_dpad_hold_start[4] = {0}; // UP, DOWN, LEFT, RIGHT
 
 // Input state
 static uint32_t last_input = 0;
 static uint32_t suppressed_input = 0;
-static int64_t menu_press_time = 0;
-static bool menu_pressed = false;
-
-#define SYSTEM_MENU_HOLD_US 500000
+static volatile bool s_menu_requested = false;
+static volatile bool s_engine_exited = false;
 
 // Event queue for gamepad-generated events
 #define EVENT_RING_SIZE 32
@@ -151,37 +152,57 @@ static const rg_bind_t s_key_binds[] = {
     {0, SDL_SCANCODE_UNKNOWN, (SDL_Keycode)0}
 };
 
+extern "C" Uint32 SDL_RG_GetMouseState(int *x, int *y)
+{
+    if (x) *x = g_cursor_x;
+    if (y) *y = g_cursor_y;
+    return g_mouse_buttons;
+}
+
+extern "C" Uint32 SDL_RG_GetRelativeMouseState(int *x, int *y)
+{
+    if (x) *x = g_rel_dx;
+    if (y) *y = g_rel_dy;
+    g_rel_dx = 0;
+    g_rel_dy = 0;
+    return g_mouse_buttons;
+}
+
 extern "C" int SDL_RG_PollEvent(SDL_Event *event)
 {
     if (dequeue_event(event)) {
         return 1;
     }
 
+    static int64_t last_gamepad_poll = 0;
+    int64_t now = rg_system_timer();
+    if (now - last_gamepad_poll < 16000) {
+        return 0;
+    }
+    last_gamepad_poll = now;
+
     uint32_t raw_input = rg_input_read_gamepad();
     suppressed_input &= raw_input;
     uint32_t current_input = raw_input & ~suppressed_input;
-    int64_t now = rg_system_timer();
 
-    // Menu key hold check for Retro-Go GUI
-    if (current_input & RG_KEY_MENU) {
-        if (!menu_pressed) {
-            menu_pressed = true;
-            menu_press_time = now;
-        } else if (now - menu_press_time >= SYSTEM_MENU_HOLD_US) {
-            suppressed_input |= RG_KEY_MENU;
-            menu_pressed = false;
-            rg_gui_game_menu();
-            return 0;
+    // Open Retro-Go menu on MENU button press (executed on app_main's internal SRAM stack)
+    if ((current_input & RG_KEY_MENU) && !(last_input & RG_KEY_MENU)) {
+        suppressed_input |= RG_KEY_MENU;
+        last_input = current_input;
+        s_menu_requested = true;
+        while (s_menu_requested && !s_engine_exited) {
+            rg_task_delay(20);
         }
-    } else {
-        menu_pressed = false;
+        return 0;
     }
 
     // Virtual mouse motion via D-pad
-    bool moved = false;
     int dpad_keys[4] = {RG_KEY_UP, RG_KEY_DOWN, RG_KEY_LEFT, RG_KEY_RIGHT};
     int dx_table[4] = {0, 0, -1, 1};
     int dy_table[4] = {-1, 1, 0, 0};
+
+    int old_x = g_cursor_x;
+    int old_y = g_cursor_y;
 
     for (int d = 0; d < 4; d++) {
         if (current_input & dpad_keys[d]) {
@@ -195,7 +216,6 @@ extern "C" int SDL_RG_PollEvent(SDL_Event *event)
 
             g_cursor_x += dx_table[d] * speed;
             g_cursor_y += dy_table[d] * speed;
-            moved = true;
         } else {
             g_dpad_hold_start[d] = 0;
         }
@@ -206,12 +226,18 @@ extern "C" int SDL_RG_PollEvent(SDL_Event *event)
     if (g_cursor_y < 0) g_cursor_y = 0;
     if (g_cursor_y > 479) g_cursor_y = 479;
 
-    if (moved) {
+    if (g_cursor_x != old_x || g_cursor_y != old_y) {
+        g_rel_dx += (g_cursor_x - old_x);
+        g_rel_dy += (g_cursor_y - old_y);
         push_mouse_motion(g_cursor_x, g_cursor_y);
     }
 
     // Mouse buttons (A = Left Click, B = Right Click)
     uint32_t changed = current_input ^ last_input;
+
+    g_mouse_buttons = 0;
+    if (current_input & RG_KEY_A) g_mouse_buttons |= SDL_BUTTON(SDL_BUTTON_LEFT);
+    if (current_input & RG_KEY_B) g_mouse_buttons |= SDL_BUTTON(SDL_BUTTON_RIGHT);
 
     if (changed & RG_KEY_A) {
         push_mouse_button(SDL_BUTTON_LEFT, (current_input & RG_KEY_A) != 0, g_cursor_x, g_cursor_y);
@@ -291,12 +317,13 @@ static void fallout_engine_task(void *arg)
     if (game_version == 1) {
         ret = fo1::main(argc_fake, argv_fake);
     } else {
-        ret = fo2::main(argc_fake, argv_fake);
+        RG_LOGE("Fallout 2 is not bundled in this Fallout 1 build.\n");
+        ret = -1;
     }
 
     RG_LOGI("Fallout engine finished (returned %d), exiting.\n", ret);
-    rg_task_delay(500);
-    rg_system_exit();
+    s_engine_exited = true;
+    vTaskDelete(NULL);
 }
 
 extern "C" void app_main(void)
@@ -323,7 +350,7 @@ extern "C" void app_main(void)
 
 #ifdef ESP_PLATFORM
     // Route all standard malloc allocations directly to external PSRAM (SPIRAM)
-    // to preserve internal SRAM for system/DMA/interrupts and avoid out-of-memory.
+    // to preserve internal SRAM for system/DMA/interrupts and SD card reads.
     heap_caps_malloc_extmem_enable(0);
 #endif
 
@@ -364,7 +391,9 @@ extern "C" void app_main(void)
     if (game_version == 1) {
         fo1::compat_set_base_path(data_dir);
     } else {
-        fo2::compat_set_base_path(data_dir);
+        rg_gui_alert("Fallout 2", "Fallout 2 is not bundled in this Fallout 1 core.");
+        rg_system_exit();
+        return;
     }
 
     char master_dat[512];
@@ -407,12 +436,12 @@ extern "C" void app_main(void)
         rg_display_set_scaling(RG_DISPLAY_SCALING_FULL);
     }
 
-    // Start Fallout engine task with 96KB stack in PSRAM on Core 0
+    // Start Fallout engine task with 56KB stack in PSRAM on Core 0
     TaskHandle_t task_handle = NULL;
     BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
         fallout_engine_task,
         "fallout",
-        96 * 1024,
+        56 * 1024,
         (void*)(intptr_t)game_version,
         5,
         &task_handle,
@@ -429,8 +458,14 @@ extern "C" void app_main(void)
 
     RG_LOGI("Fallout %d task created successfully! handle=%p\n", game_version, task_handle);
 
-    // Main thread yields and processes system events
-    while (true) {
-        rg_task_delay(100);
+    // Main thread yields and processes system events (on internal SRAM stack)
+    while (!s_engine_exited) {
+        if (s_menu_requested) {
+            rg_gui_game_menu();
+            s_menu_requested = false;
+        }
+        rg_task_delay(50);
     }
+    rg_task_delay(200);
+    rg_system_exit();
 }

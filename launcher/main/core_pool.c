@@ -21,8 +21,8 @@
 #include "core_manifest.h"
 #include "core_pool.h"
 
-#define CORE_POOL_LABEL "cores"
-#define CORE_SD_FOLDER RG_STORAGE_ROOT "/cores"
+#define CORE_POOL_LABEL "apps"
+#define CORE_SD_FOLDER RG_STORAGE_ROOT "/apps"
 #define CORE_SD_ASSET_FOLDER CORE_SD_FOLDER "/installed"
 
 /* Some cores build a writable asset store inside their own partition, at fixed offsets from its
@@ -437,7 +437,7 @@ void core_pool_init(void)
                                     CORE_POOL_LABEL);
     if (!pool)
     {
-        RG_LOGE("Core pool partition '%s' not found", CORE_POOL_LABEL);
+        RG_LOGE("App pool partition '%s' not found", CORE_POOL_LABEL);
         return;
     }
     rg_storage_mkdir(CORE_SD_FOLDER);
@@ -502,7 +502,7 @@ void core_pool_init(void)
             }
             else
             {
-                RG_LOGW("Core pool is unformatted (%u KB)", (unsigned)(pool->size / 1024));
+                RG_LOGW("App pool is unformatted (%u KB)", (unsigned)(pool->size / 1024));
                 manifest_reset();
                 return;
             }
@@ -568,7 +568,7 @@ void core_pool_init(void)
     }
     if (manifest.selected >= (int)manifest.count)
         manifest.selected = -1;
-    RG_LOGI("Core pool: %u core(s), %u KB used of %u KB", (unsigned)manifest.count,
+    RG_LOGI("App pool: %u app(s), %u KB used of %u KB", (unsigned)manifest.count,
             (unsigned)(core_pool_used() / 1024), (unsigned)(core_pool_total() / 1024));
     /* Cores installed before the asset area existed may sit inside it; the core that owns the
  * area erases it on its next run, so say so once. */
@@ -909,33 +909,33 @@ static int core_pool_install_image(const char *path, const char *expected_name, 
 {
     if (!pool)
     {
-        rg_gui_alert(_("Core manager"), _("Core pool is not available."));
+        rg_gui_alert(_("App manager"), _("App pool is not available."));
         return -1;
     }
     FILE *file = fopen(path, "rb");
     if (!file)
     {
-        rg_gui_alert(_("Core manager"), _("Failed to open the core image."));
+        rg_gui_alert(_("App manager"), _("Failed to open the app image."));
         return -1;
     }
     if (fseek(file, 0, SEEK_END) != 0)
     {
         fclose(file);
-        rg_gui_alert(_("Core manager"), _("Failed to read the file."));
+        rg_gui_alert(_("App manager"), _("Failed to read the file."));
         return -1;
     }
     long file_length = ftell(file);
     if (file_length < 0 || fseek(file, 0, SEEK_SET) != 0)
     {
         fclose(file);
-        rg_gui_alert(_("Core manager"), _("Failed to read the file."));
+        rg_gui_alert(_("App manager"), _("Failed to read the file."));
         return -1;
     }
     size_t size = (size_t)file_length;
     if (size > UINT32_MAX || size > pool->size)
     {
         fclose(file);
-        rg_gui_alert(_("Core manager"), _("This core image is larger than the available pool."));
+        rg_gui_alert(_("App manager"), _("This app image is larger than the available pool."));
         return -1;
     }
     uint8_t image_header[0x20 + sizeof(esp_app_desc_t)];
@@ -944,7 +944,7 @@ static int core_pool_install_image(const char *path, const char *expected_name, 
         image_header[0] != CORE_IMAGE_MAGIC)
     {
         fclose(file);
-        rg_gui_alert(_("Core manager"), _("This file is not a readable core image."));
+        rg_gui_alert(_("App manager"), _("This file is not a readable app image."));
         return -1;
     }
     int result = -1;
@@ -968,7 +968,7 @@ static int core_pool_install_image(const char *path, const char *expected_name, 
     }
     if (expected_name && entry_find(name) != entry_find(expected_name))
     {
-        rg_gui_alert(_("Core manager"), _("That image is for a different core."));
+        rg_gui_alert(_("App manager"), _("That image is for a different app."));
         goto cleanup;
     }
     int existing = entry_find(name);
@@ -976,7 +976,7 @@ static int core_pool_install_image(const char *path, const char *expected_name, 
         snprintf(old_name, sizeof(old_name), "%s", manifest.entries[existing].name);
     if (existing < 0 && manifest.count >= CORE_MAX_ENTRIES)
     {
-        rg_gui_alert(_("Core manager"), _("The pool is full. Remove a core first."));
+        rg_gui_alert(_("App manager"), _("The pool is full. Remove an app first."));
         goto cleanup;
     }
     /* Cores with a runtime asset store need a fixed range of the pool to themselves, and
@@ -1003,7 +1003,7 @@ static int core_pool_install_image(const char *path, const char *expected_name, 
             char msg[160];
             snprintf(msg, sizeof(msg), "%s\n%s", _("Free the asset area first. Uninstall:"),
                      blockers);
-            rg_gui_alert(_("Core manager"), msg);
+            rg_gui_alert(_("App manager"), msg);
             goto cleanup;
         }
     }
@@ -1046,7 +1046,7 @@ static int core_pool_install_image(const char *path, const char *expected_name, 
         {2, _("Cancel"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},
         RG_DIALOG_END,
     };
-    if (ask_confirm && rg_gui_dialog(existing >= 0 ? _("Replace core?") : _("Install core?"),
+    if (ask_confirm && rg_gui_dialog(existing >= 0 ? _("Replace app?") : _("Install app?"),
                                      install_options, 1) != 1)
         goto cleanup;
     /* A store core has no room for a second copy, so replacing it reuses its own offset. The
@@ -1064,10 +1064,10 @@ static int core_pool_install_image(const char *path, const char *expected_name, 
                 (unsigned)(core_pool_total() - core_pool_used()),
                 (unsigned)(needs_store ? store_start : pool->size));
         rg_gui_alert(
-            _("Core manager"),
+            _("App manager"),
             needs_store
-                ? _("Not enough room below the asset area. Uninstall the other cores first.")
-                : _("The core could not be written. Check pool space and SD card."));
+                ? _("Not enough room below the asset area. Uninstall the other apps first.")
+                : _("The app could not be written. Check pool space and SD card."));
         goto cleanup;
     }
     int index = existing;
@@ -1092,7 +1092,7 @@ static int core_pool_install_image(const char *path, const char *expected_name, 
     if (!manifest_flush())
     {
         RG_LOGE("Failed to save the core manifest");
-        rg_gui_alert(_("Core manager"), _("Failed to save the core list."));
+        rg_gui_alert(_("App manager"), _("Failed to save the app list."));
         /* Put the previous entry back so the in-memory list still matches what is really
  * in flash. */
         manifest.entries[index] = previous;
@@ -1627,7 +1627,7 @@ static void core_ui_draw(const core_ui_t *ui)
         if (it->installed >= 0)
         {
             y += step;
-            rg_gui_draw_text(x, y, L.w - 24, _("Installed core: this will replace it"), C_GRAY,
+            rg_gui_draw_text(x, y, L.w - 24, _("Installed app: this will replace it"), C_GRAY,
                              C_TRANSPARENT, 0);
         }
 
@@ -1716,8 +1716,8 @@ static void core_ui_draw(const core_ui_t *ui)
 
     if (!ui->count)
     {
-        const char *empty = ui->install_list ? _("No cores found on the SD card")
-                                             : _("No cores installed");
+        const char *empty = ui->install_list ? _("No apps found on the SD card")
+                                             : _("No apps installed");
         rg_gui_draw_text(L.x + 10, L.y + L.head_h + 2, L.w - 20, empty, C_DIM_GRAY, C_TRANSPARENT,
                          0);
     }
@@ -1998,7 +1998,7 @@ static bool core_install_activate(core_ui_t *ui, int index)
         char path[RG_PATH_MAX + 1];
         snprintf(path, sizeof(path), CORE_SD_FOLDER "/%s", it->file);
         if (core_pool_install_image(path, it->name, false) >= 0 &&
-            rg_gui_confirm(_("Core installed"), _("Restart now to refresh the launcher?"), false))
+            rg_gui_confirm(_("App installed"), _("Restart now to refresh the launcher?"), false))
             rg_system_restart();
         core_ui_reload(ui);
         return false;
@@ -2018,7 +2018,7 @@ static bool core_install_activate(core_ui_t *ui, int index)
 
         if (!picked)
         {
-            rg_gui_alert(_("Install from SD"), _("Select at least one core first."));
+            rg_gui_alert(_("Install from SD"), _("Select at least one app first."));
             return false;
         }
 
@@ -2028,9 +2028,9 @@ static bool core_install_activate(core_ui_t *ui, int index)
         format_pool_mb(free_text, sizeof(free_text), core_pool_total() > used
                                                         ? core_pool_total() - used
                                                         : 0);
-        snprintf(summary, sizeof(summary), _("Cores: %d\nImage total: %s\nPool free: %s"),
+        snprintf(summary, sizeof(summary), _("Apps: %d\nImage total: %s\nPool free: %s"),
                  picked, size_text, free_text);
-        if (!rg_gui_confirm(_("Install selected cores?"), summary, false))
+        if (!rg_gui_confirm(_("Install selected apps?"), summary, false))
             return false;
 
         for (int i = 0; i < ui->count; i++)
@@ -2046,7 +2046,7 @@ static bool core_install_activate(core_ui_t *ui, int index)
     ui->top = 0;
     core_ui_reload(ui);
 
-    if (done && rg_gui_confirm(_("Core installed"), _("Restart now to refresh the launcher?"), false))
+    if (done && rg_gui_confirm(_("App installed"), _("Restart now to refresh the launcher?"), false))
         rg_system_restart();
 
     return false;
@@ -2058,12 +2058,12 @@ static void core_install_run(const char *only_id)
 
     if (!items)
     {
-        rg_gui_alert(_("Core manager"), _("Not enough memory."));
+        rg_gui_alert(_("App manager"), _("Not enough memory."));
         return;
     }
 
     core_ui_t ui = {
-        .title = only_id ? _("Replace core") : _("Install from SD"),
+        .title = only_id ? _("Replace app") : _("Install from SD"),
         .primary = _("Install"),
         .only_id = only_id,
         .items = items,
@@ -2075,15 +2075,15 @@ static void core_install_run(const char *only_id)
 
     if (!ui.count)
     {
-        rg_gui_alert(ui.title, only_id ? _("That core is not on the SD card.")
-                                       : _("No cores found on the SD card."));
+        rg_gui_alert(ui.title, only_id ? _("That app is not on the SD card.")
+                                       : _("No apps found on the SD card."));
         free(items);
         return;
     }
 
     if (!core_ui_begin())
     {
-        rg_gui_alert(_("Core manager"), _("Not enough memory."));
+        rg_gui_alert(_("App manager"), _("Not enough memory."));
         free(items);
         return;
     }
@@ -2126,7 +2126,7 @@ static void core_pool_details(int index)
     {
         if (core_pool_select(index))
             rg_system_restart();
-        rg_gui_alert(_("Core manager"), _("Failed to select the core."));
+        rg_gui_alert(_("App manager"), _("Failed to select the app."));
     }
     else if (sel == 2)
     {
@@ -2134,17 +2134,17 @@ static void core_pool_details(int index)
     }
     else if (sel == 3)
     {
-        if (rg_gui_confirm(_("Uninstall core"), _("Remove this core from the pool?"), false))
+        if (rg_gui_confirm(_("Uninstall app"), _("Remove this app from the pool?"), false))
         {
             if (core_pool_remove(index))
             {
-                if (rg_gui_confirm(_("Core uninstalled"), _("Restart now to refresh the launcher?"),
+                if (rg_gui_confirm(_("App uninstalled"), _("Restart now to refresh the launcher?"),
                                    false))
                     rg_system_restart();
             }
             else
             {
-                rg_gui_alert(_("Core manager"), _("Failed to remove the core."));
+                rg_gui_alert(_("App manager"), _("Failed to remove the app."));
             }
         }
     }
@@ -2163,7 +2163,7 @@ static bool core_manager_activate(core_ui_t *ui, int index)
     }
     else if (it->kind == CORE_KIND_FORMAT)
     {
-        if (rg_gui_confirm(_("Format pool"), _("Remove all cores from the pool?"), false))
+        if (rg_gui_confirm(_("Format pool"), _("Remove all apps from the pool?"), false))
         {
             if (core_pool_format())
             {
@@ -2173,7 +2173,7 @@ static bool core_manager_activate(core_ui_t *ui, int index)
             }
             else
             {
-                rg_gui_alert(_("Core manager"), _("Failed to format the pool."));
+                rg_gui_alert(_("App manager"), _("Failed to format the pool."));
             }
         }
     }
@@ -2192,12 +2192,12 @@ static void core_manager_run(void)
 
     if (!items)
     {
-        rg_gui_alert(_("Core manager"), _("Not enough memory."));
+        rg_gui_alert(_("App manager"), _("Not enough memory."));
         return;
     }
 
     core_ui_t ui = {
-        .title = _("Core manager"),
+        .title = _("App manager"),
         .primary = NULL,
         .only_id = NULL,
         .items = items,
@@ -2209,7 +2209,7 @@ static void core_manager_run(void)
 
     if (!core_ui_begin())
     {
-        rg_gui_alert(_("Core manager"), _("Not enough memory."));
+        rg_gui_alert(_("App manager"), _("Not enough memory."));
         free(items);
         return;
     }
@@ -2226,7 +2226,7 @@ rg_gui_event_t core_manager_cb(rg_gui_option_t *option, rg_gui_event_t event)
 
     if (!core_pool_available())
     {
-        rg_gui_alert(_("Core manager"), _("Core pool is not available."));
+        rg_gui_alert(_("App manager"), _("App pool is not available."));
         return RG_DIALOG_VOID;
     }
 
